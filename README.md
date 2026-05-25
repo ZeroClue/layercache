@@ -34,7 +34,7 @@
 
 ## Overview
 
-LayerCache sits between your application and LLM providers (Anthropic, OpenAI, Google Gemini). It is a **drop-in replacement** for your LLM provider's base URL — just point your OpenAI SDK at LayerCache and everything works automatically.
+LayerCache sits between your application and LLM providers (Anthropic, OpenAI, Google Gemini). It is a **drop-in replacement** for your LLM provider's base URL — just point your OpenAI SDK at LayerCache.
 
 In the background, LayerCache:
 
@@ -56,7 +56,7 @@ In the background, LayerCache:
 
 ## Core Concept: The Layered Prompt Architecture
 
-The key insight behind LayerCache is that prompts have **naturally occurring layers** with different stability profiles. By enforcing strict separation between these layers, we can optimize caching without sacrificing prompt quality.
+The key insight behind LayerCache is that prompts have **naturally occurring layers** with different stability profiles. By enforcing strict separation between these layers, we can optimize caching and enhance prompts without invalidating provider prefix caches.
 
 | Layer | Content | Mutability | Cache Status |
 |-------|---------|------------|--------------|
@@ -454,4 +454,12 @@ layercache/
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+This project is licensed under the **MIT License**. See [LICENSE](LICENSE) for the full text.
+
+**What this means:**
+- ✅ You can freely use, copy, modify, and distribute this software
+- ✅ You can use it for commercial and private purposes
+- ✅ You must include a copy of the license and copyright notice
+- ⚠️  The software is provided "as-is" without warranty
+
+For more information, visit https://opensource.org/licenses/MIT
