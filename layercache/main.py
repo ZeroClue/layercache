@@ -232,7 +232,7 @@ def _resolve_provider_api_key(model: str) -> str:
 # --- OpenAI-Compatible Endpoints ---
 
 
-@app.post("/v1/chat/completions")
+@app.post("/v1/chat/completions", response_model=None)
 async def chat_completions(
     request: Request,
     authorization: str | None = Header(None),
@@ -339,7 +339,7 @@ async def _handle_streaming(lc_request: LayerCacheRequest, api_key: str) -> Asyn
 # --- Anthropic-Compatible Endpoint ---
 
 
-@app.post("/v1/messages")
+@app.post("/v1/messages", response_model=None)
 async def anthropic_messages(
     request: Request,
     authorization: str | None = Header(None),
@@ -622,7 +622,7 @@ async def health_check() -> JSONResponse:
     """Health check endpoint."""
     status = {
         "status": "healthy",
-        "version": "1.1.0",
+        "version": app.version,
         "semantic_cache": _semantic_cache is not None,
     }
 
@@ -643,12 +643,30 @@ async def health_check() -> JSONResponse:
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Global exception handler for unhandled errors."""
     request_id = getattr(request.state, "request_id", "unknown")
-    logger.error("Unhandled exception (request_id=%s): %s", request_id, exc, exc_info=True)
+
+    # LiteLLM provider/auth errors -> 4xx, not 500
+    if hasattr(litellm, "BadRequestError") and isinstance(exc, litellm.BadRequestError):
+        status = 400
+        message = str(exc)
+        logger.warning("LiteLLM bad request (request_id=%s): %s", request_id, message)
+    elif hasattr(litellm, "AuthenticationError") and isinstance(exc, litellm.AuthenticationError):
+        status = 401
+        message = str(exc)
+        logger.warning("LiteLLM auth error (request_id=%s): %s", request_id, message)
+    elif hasattr(litellm, "RateLimitError") and isinstance(exc, litellm.RateLimitError):
+        status = 429
+        message = str(exc)
+        logger.warning("LiteLLM rate limit (request_id=%s): %s", request_id, message)
+    else:
+        status = 500
+        message = "Internal server error"
+        logger.error("Unhandled exception (request_id=%s): %s", request_id, exc, exc_info=True)
+
     return JSONResponse(
-        status_code=500,
+        status_code=status,
         content={
             "error": {
-                "message": "Internal server error",
+                "message": message,
                 "type": "server_error",
                 "request_id": request_id,
             }
