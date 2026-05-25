@@ -1,0 +1,41 @@
+# LayerCache Configuration
+# See https://github.com/layercache/layercache for full docs
+
+proxy:
+  host: 0.0.0.0
+  port: 8000
+  # Optional: Require API key to talk to the proxy itself
+  # auth:
+  #   proxy_api_key: "your-proxy-secret"
+  log_level: info
+
+providers:
+  anthropic:
+    api_key_env: ANTHROPIC_API_KEY
+  openai:
+    api_key_env: OPENAI_API_KEY
+  gemini:
+    api_key_env: GOOGLE_API_KEY
+
+caching:
+  semantic:
+    enabled: true
+    backend: sqlite
+    db_path: /data/semantic_cache.db
+    default_ttl: 300
+    similarity_threshold: 0.95
+    embedder: "BAAI/bge-small-en-v1.5"
+
+enhancements:
+  registered:
+    - name: chain_of_thought
+      class_path: "layercache.enhancements.ChainOfThoughtEnhancement"
+    - name: structured_json
+      class_path: "layercache.enhancements.StructuredOutputEnhancement"
+    - name: self_critique
+      class_path: "layercache.enhancements.SelfCritiqueEnhancement"
+    - name: dynamic_few_shot
+      class_path: "layercache.enhancements.DynamicFewShotEnhancement"
+      config:
+        vector_store: /data/few_shots/examples.json
+        top_k: 3

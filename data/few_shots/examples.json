@@ -1,0 +1,16 @@
+{
+  "examples": [
+    {
+      "input": "How do I reverse a list in Python?",
+      "output": "You can reverse a list in Python using the `[::-1]` slice notation or the `reverse()` method.\n\n```python\nmy_list = [1, 2, 3, 4, 5]\nreversed_list = my_list[::-1]  # [5, 4, 3, 2, 1]\n\n# or\nmy_list.reverse()  # reverses in place\n```\n\nThe slice approach creates a new list, while `.reverse()` modifies the list in place."
+    },
+    {
+      "input": "What is the difference between a list and a tuple in Python?",
+      "output": "The key differences are:\n\n1. **Mutability**: Lists are mutable (can be modified after creation), tuples are immutable (cannot be changed).\n2. **Syntax**: Lists use `[]`, tuples use `()`.\n3. **Performance**: Tuples are slightly faster and use less memory.\n4. **Usage**: Use tuples for fixed collections (like coordinates), lists for dynamic collections.\n\n```python\nmy_list = [1, 2, 3]  # mutable\nmy_tuple = (1, 2, 3)  # immutable\nmy_list[0] = 10  # OK\n# my_tuple[0] = 10  # TypeError!\n```"
+    },
+    {
+      "input": "How do I handle exceptions in Python?",
+      "output": "Use `try/except` blocks to handle exceptions:\n\n```python\ntry:\n    result = 10 / 0\nexcept ZeroDivisionError as e:\n    print(f\"Cannot divide by zero: {e}\")\nexcept Exception as e:\n    print(f\"Unexpected error: {e}\")\nfinally:\n    print(\"This always runs\")\n```\n\nBest practices:\n- Catch specific exceptions first, then broader ones\n- Use `finally` for cleanup code\n- Use `else` for code that runs only if no exception occurred"
+    }
+  ]
+}
