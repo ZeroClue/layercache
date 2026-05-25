@@ -1,8 +1,9 @@
 """Tests for the Stratifier module."""
 
 import pytest
-from layercache.stratifier import Stratifier
+
 from layercache.models import LayerType
+from layercache.stratifier import Stratifier
 
 
 @pytest.fixture
@@ -37,7 +38,8 @@ class TestHeuristicStratification:
 
         assert len(prompt.layers[LayerType.SYSTEM]) == 1
         assert len(prompt.layers[LayerType.CONTEXT]) == 1
-        assert prompt.layers[LayerType.CONTEXT][0].content == "You have access to the following tools: ..."
+        expected = "You have access to the following tools: ..."
+        assert prompt.layers[LayerType.CONTEXT][0].content == expected
 
     def test_conversation_history_goes_to_l2(self, stratifier: Stratifier) -> None:
         """Assistant and non-final user messages go to L2 (Session)."""
@@ -64,7 +66,13 @@ class TestHeuristicStratification:
         messages = [
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": "What's the weather?"},
-            {"role": "assistant", "content": "Let me check.", "tool_calls": [{"id": "1", "type": "function", "function": {"name": "get_weather"}}]},
+            {
+                "role": "assistant",
+                "content": "Let me check.",
+                "tool_calls": [
+                    {"id": "1", "type": "function", "function": {"name": "get_weather"}}
+                ],
+            },
             {"role": "tool", "content": '{"temp": 72}', "tool_call_id": "1"},
             {"role": "assistant", "content": "It's 72 degrees."},
             {"role": "user", "content": "Thanks!"},  # Final user -> L4
@@ -90,7 +98,10 @@ class TestHeuristicStratification:
         """System messages containing tool-related keywords go to L1."""
         messages = [
             {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "system", "content": "Here are the available tools:\n- search_web\n- get_weather"},
+            {
+                "role": "system",
+                "content": "Here are the available tools:\n- search_web\n- get_weather",
+            },
             {"role": "user", "content": "Search the web"},
         ]
         prompt = stratifier.stratify(messages)

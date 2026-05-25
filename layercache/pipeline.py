@@ -362,6 +362,10 @@ class RequestPipeline:
             payload["tool_choice"] = request.tool_choice
         if request.response_format is not None:
             payload["response_format"] = request.response_format
+        if request.user is not None:
+            payload["user"] = request.user
+        if request.stop is not None:
+            payload["stop"] = request.stop
 
         return payload
 

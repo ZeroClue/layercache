@@ -1,11 +1,10 @@
 """Tests for the Enhancement Engine."""
 
-import pytest
-from layercache.models import StratifiedPrompt, LayerType
 from layercache.enhancements.base import EnhancementRegistry
 from layercache.enhancements.chain_of_thought import ChainOfThoughtEnhancement
-from layercache.enhancements.structured_output import StructuredOutputEnhancement
 from layercache.enhancements.self_critique import SelfCritiqueEnhancement
+from layercache.enhancements.structured_output import StructuredOutputEnhancement
+from layercache.models import LayerType, StratifiedPrompt
 
 
 def _make_prompt() -> StratifiedPrompt:

@@ -1,7 +1,7 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.1.0-blue" alt="Version 1.1.0">
+  <img src="https://img.shields.io/badge/version-1.2.0-blue" alt="Version 1.2.0">
   <img src="https://img.shields.io/badge/python-3.11+-green" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-73%20passing-brightgreen" alt="73 Tests Passing">
+  <img src="https://img.shields.io/badge/tests-98%20passing-brightgreen" alt="98 Tests Passing">
   <img src="https://img.shields.io/badge/license-MIT-orange" alt="MIT License">
 </p>
 
@@ -122,7 +122,7 @@ uvicorn layercache.main:app --host 0.0.0.0 --port 8000
 
 ```bash
 curl http://localhost:8000/health
-# {"status":"healthy","version":"1.1.0","semantic_cache":true}
+# {"status":"healthy","version":"1.2.0","semantic_cache":true}
 ```
 
 ## Usage Examples
@@ -221,6 +221,7 @@ curl http://localhost:8000/metrics
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/v1/chat/completions` | Chat completions (drop-in OpenAI replacement) |
+| `POST` | `/v1/messages` | Anthropic Messages API (drop-in Claude Code replacement) |
 | `GET` | `/v1/models` | List available models |
 
 ### Management Endpoints
@@ -404,7 +405,8 @@ layercache/
 │   ├── canonicalizer.py          # Prompt normalization
 │   ├── config.py                 # YAML configuration
 │   ├── adapters/                 # Provider cache marker injection
-│   │   ├── anthropropic.py       # Anthropic cache_control
+│   │   ├── anthropic.py         # Anthropic cache_control
+│   │   ├── anthropic_messages.py # /v1/messages wire-format shim
 │   │   ├── openai.py             # OpenAI auto-caching
 │   │   └── gemini.py             # Gemini CachedContent
 │   ├── enhancements/             # Cache-safe prompt enhancements
@@ -420,7 +422,7 @@ layercache/
 │   │   └── collector.py          # Prometheus + ROI tracking
 │   └── registry/                 # Prompt template management
 │       └── prompt_registry.py    # YAML/JSON template loader
-├── tests/                        # Test suite (73 tests)
+├── tests/                        # Test suite (98 tests)
 ├── data/                         # Sample data
 │   ├── prompts/                  # Prompt templates
 │   └── few_shots/                # Few-shot examples

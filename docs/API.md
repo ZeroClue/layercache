@@ -30,11 +30,11 @@ x-api-key: your-proxy-api-key
 
 ---
 
-## OpenAI-Compatible Endpoints
+## Endpoints
 
 ### POST /v1/chat/completions
 
-Create a chat completion. Fully compatible with the [OpenAI Chat Completions API](https://platform.openai.com/docs/api-reference/chat).
+OpenAI-compatible. Fully compatible with the [OpenAI Chat Completions API](https://platform.openai.com/docs/api-reference/chat).
 
 #### Request Headers
 
@@ -130,6 +130,96 @@ data: {"id":"chatcmpl-abc123","choices":[{"delta":{"content":"/await"}}]}
 data: {"id":"chatcmpl-abc123","choices":[{"delta":{"content":" is..."}}]}
 
 data: [DONE]
+```
+
+---
+
+### POST /v1/messages
+
+Create a message. Fully compatible with the [Anthropic Messages API](https://docs.anthropic.com/en/api/messages).
+
+#### Request Headers
+
+| Header | Required | Description |
+|--------|----------|-------------|
+| `Content-Type` | Yes | `application/json` |
+| `Authorization` | Yes | `x-api-key: <provider-api-key>` or `Bearer <provider-api-key>` |
+| `anthropic-version` | No | Passed through to provider (e.g. `2023-06-01`) |
+
+#### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `model` | string | Yes | Model name (e.g. `claude-3-5-sonnet-20241022`) |
+| `messages` | array | Yes | Array of message objects (Anthropic format) |
+| `system` | string/array | No | System prompt (string or array of text blocks) |
+| `max_tokens` | integer | **Yes** | Maximum tokens to generate |
+| `temperature` | float | No | Sampling temperature (0-1) |
+| `top_p` | float | No | Nucleus sampling parameter |
+| `stop_sequences` | string[] | No | Sequences that stop generation |
+| `stream` | boolean | No | Enable streaming (default: `false`) |
+| `tools` | array | No | Tool definitions (Anthropic format with `input_schema`) |
+| `tool_choice` | object | No | Tool choice: `{"type": "auto"}`, `{"type": "any"}`, or `{"type": "tool", "name": "x"}` |
+| `metadata` | object | No | Metadata (supports `user_id` for user field) |
+
+#### Example Request
+
+```bash
+curl -X POST http://localhost:8000/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: sk-ant-..." \
+  -H "anthropic-version: 2023-06-01" \
+  -d '{
+    "model": "claude-3-5-sonnet-20241022",
+    "max_tokens": 1024,
+    "messages": [
+      {"role": "user", "content": "Hello, Claude!"}
+    ]
+  }'
+```
+
+#### Example Response (Non-Streaming)
+
+```json
+{
+  "id": "msg_01abc123",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {"type": "text", "text": "Hello! How can I help you today?"}
+  ],
+  "model": "claude-3-5-sonnet-20241022",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 10,
+    "output_tokens": 15
+  }
+}
+```
+
+#### Example Response (Streaming)
+
+When `stream: true`, the response uses Anthropic SSE events:
+
+```
+event: message_start
+data: {"type":"message_start","message":{"id":"msg_...","type":"message","role":"assistant","content":[],"model":"claude-3-5-sonnet-20241022","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":0,"output_tokens":0}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello!"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":10,"output_tokens":5}}
+
+event: message_stop
+data: {"type":"message_stop"}
 ```
 
 ---
@@ -386,7 +476,7 @@ Check the health status of the LayerCache service.
 ```json
 {
   "status": "healthy",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "semantic_cache": true,
   "semantic_cache_stats": {
     "total_entries": 42,
@@ -526,10 +616,41 @@ const response = await client.chat.completions.create({
 });
 ```
 
+### Anthropic SDK (Python)
+
+```python
+import anthropic
+
+client = anthropic.Anthropic(
+    base_url="http://localhost:8000",
+    api_key="sk-ant-your-key",
+)
+
+message = client.messages.create(
+    model="claude-3-5-sonnet-20241022",
+    max_tokens=1024,
+    messages=[
+        {"role": "user", "content": "Explain caching."}
+    ],
+)
+```
+
+Streaming with Anthropic SDK:
+
+```python
+with client.messages.stream(
+    model="claude-3-5-sonnet-20241022",
+    max_tokens=1024,
+    messages=[{"role": "user", "content": "Tell me a story."}],
+) as stream:
+    for text in stream.text_stream:
+        print(text, end="")
+```
+
 ### cURL
 
 ```bash
-# Simple request
+# OpenAI-compatible endpoint
 curl -X POST http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer sk-ant-..." \
@@ -551,5 +672,18 @@ curl -X POST http://localhost:8000/v1/chat/completions \
     ],
     "lc_template": "code-assistant",
     "lc_enhancements": ["self_critique"]
+  }'
+
+# Anthropic-compatible endpoint
+curl -X POST http://localhost:8000/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: sk-ant-..." \
+  -H "anthropic-version: 2023-06-01" \
+  -d '{
+    "model": "claude-3-5-sonnet-20241022",
+    "max_tokens": 1024,
+    "messages": [
+      {"role": "user", "content": "Hello, Claude!"}
+    ]
   }'
 ```

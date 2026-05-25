@@ -1,9 +1,9 @@
 """Tests for the Canonicalizer module."""
 
-import json
 import pytest
+
 from layercache.canonicalizer import Canonicalizer
-from layercache.models import StratifiedPrompt, LayerType
+from layercache.models import LayerType, StratifiedPrompt
 
 
 @pytest.fixture
@@ -66,8 +66,8 @@ class TestToolCanonicalization:
     def test_tools_sorted_alphabetically(self, canonicalizer: Canonicalizer) -> None:
         """Tools should be sorted by function.name."""
         tools = [
-            {"type": "function", "function": {"name": "zebra_search", "description": "Search zebras"}},
-            {"type": "function", "function": {"name": "apple_fetch", "description": "Fetch apples"}},
+            {"type": "function", "function": {"name": "zebra_search", "description": "Z search"}},
+            {"type": "function", "function": {"name": "apple_fetch", "description": "A fetch"}},
             {"type": "function", "function": {"name": "mango_list", "description": "List mangoes"}},
         ]
         prompt = _make_prompt([])

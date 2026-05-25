@@ -43,7 +43,7 @@ layercache/models.py         — StratifiedPrompt, LayerCacheRequest, CacheEntry
 layercache/stratifier.py     — L0-L4 classification (heuristic/template/hints)
 layercache/canonicalizer.py  — Whitespace, JSON, tool canonicalization
 layercache/config.py         — Pydantic settings from layercache.yaml
-layercache/adapters/         — Anthropic, OpenAI, Gemini cache markers
+layercache/adapters/         — Anthropic/OpenAI/Gemini cache markers + /v1/messages shim
 layercache/enhancements/     — CoT, structured output, self-critique, dynamic few-shot
 layercache/cache/            — Embedder + SQLite semantic cache
 layercache/metrics/          — MetricsCollector + RequestTimer
@@ -52,7 +52,6 @@ layercache/registry/         — Prompt template registry (YAML/JSON)
 
 ## Gotchas
 
-- README typo: `anthropropic.py` — actual file is `layercache/adapters/anthropic.py`
 - Config at `layercache.yaml` defaults to `/data/semantic_cache.db` (Docker path); local dev may need to override or set `caching.semantic.db_path`
 - Dockerfile pre-downloads FastEmbed model during build (`BAAI/bge-small-en-v1.5`, ~400MB)
 - No CI workflows or pre-commit hooks; quality is manual

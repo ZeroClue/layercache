@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.0] - 2026-05-26
+
+### Added
+- **Anthropic `/v1/messages` endpoint** — full bidirectional wire-format translation
+  - `anthropic_request_to_fields()` converts Anthropic request to internal pipeline format
+  - `openai_response_to_anthropic()` converts pipeline response to Anthropic format
+  - `AnthropicStreamTranslator` state machine converts per-chunk OpenAI streaming deltas to correct Anthropic SSE events
+- **25 dedicated tests** for `/v1/messages` translation: request parsing (12), response formatting (5), streaming events (8)
+- **`tool_choice` mapping**: `{"type": "any"}` → `"required"`, `{"type": "auto"}` → `"auto"`, `{"type": "tool", "name": "x"}` → `{"type": "function", "function": {"name": "x"}}`
+
+### Changed
+- `LayerCacheRequest` now accepts `user` and `stop` fields (required by Anthropic wire format)
+- Pipeline `_build_payload()` forwards `user` and `stop` to LiteLLM
+
+### Fixed
+- **Duplicate termination events** — `_has_emitted_stop` flag gates post-loop `message_delta`/`message_stop`
+- **`message_start` never fires for role-only chunk** — first chunk always emits `message_start` (even if only `{"role": "assistant"}`)
+- **`_close_text_block` used for tool blocks** — added proper `_close_tool_block()` method
+- **`json.loads` can raise on truncated tool JSON** — wrapped in `try/except json.JSONDecodeError`
+- **README typo**: `anthropropic.py` → `anthropic.py`
+
+### Security
+- CORS config flagged as technically invalid (`allow_origins=["*"]` + `allow_credentials=True`) — not exploitable (proxy pattern, not browser-facing)
+
 ## [1.1.0] - 2026-05-26
 
 ### Added

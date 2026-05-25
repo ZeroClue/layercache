@@ -166,6 +166,10 @@ class LayerCacheRequest(BaseModel):
     tool_choice: str | dict[str, Any] | None = None
     response_format: dict[str, Any] | None = None
 
+    # Additional OpenAI-compatible fields
+    user: str | None = None
+    stop: str | list[str] | None = None
+
     # LayerCache Extensions
     lc_template: str | None = Field(default=None, max_length=128)
     lc_enhancements: list[str] = Field(default_factory=list, max_length=32)

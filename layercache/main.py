@@ -24,6 +24,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from .adapters import detect_provider
+from .adapters.anthropic_messages import (
+    AnthropicStreamTranslator,
+    anthropic_request_to_fields,
+    openai_response_to_anthropic,
+)
 from .cache.embedder import get_embedder
 from .cache.semantic import SemanticCache
 from .canonicalizer import Canonicalizer
@@ -161,7 +166,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="LayerCache",
     description="Intelligent Prompt Enhancement & Token Caching Proxy",
-    version="1.1.0",
+    version="1.2.0",
     lifespan=lifespan,
 )
 
@@ -315,7 +320,7 @@ async def chat_completions(
 
 
 async def _handle_streaming(lc_request: LayerCacheRequest, api_key: str) -> AsyncIterator[str]:
-    """Handle a streaming request."""
+    """Handle an OpenAI-format streaming request."""
     try:
         async for chunk in _pipeline.process_streaming_request(lc_request, api_key):
             if isinstance(chunk, dict):
@@ -329,6 +334,169 @@ async def _handle_streaming(lc_request: LayerCacheRequest, api_key: str) -> Asyn
         yield f"data: {error_body}\n\n"
     finally:
         yield "data: [DONE]\n\n"
+
+
+# --- Anthropic-Compatible Endpoint ---
+
+
+@app.post("/v1/messages")
+async def anthropic_messages(
+    request: Request,
+    authorization: str | None = Header(None),
+) -> JSONResponse | StreamingResponse:
+    """Anthropic-compatible /v1/messages endpoint.
+
+    Accepts Anthropic Messages API format. Translates to LayerCache's
+    internal pipeline and converts the response back to Anthropic format.
+
+    Supports streaming via SSE events matching Anthropic's protocol.
+    """
+    await _verify_proxy_key(authorization)
+
+    body_size = len(await request.body())
+    if body_size > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Request body too large")
+
+    try:
+        body = await request.json()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON body: {e}")
+
+    model = body.get("model", "")
+    try:
+        validate_model_name(model)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if _settings and _settings.proxy.proxy_api_key:
+        api_key = _resolve_provider_api_key(model)
+    else:
+        api_key = ""
+        if authorization and authorization.startswith("Bearer "):
+            api_key = authorization[7:]
+        if not api_key:
+            api_key = request.headers.get("x-api-key", "")
+
+    if not api_key:
+        raise HTTPException(
+            status_code=401,
+            detail="No API key provided. "
+            "In passthrough mode, send a Bearer token or X-API-Key header. "
+            "In protected mode, configure the provider API key environment variable.",
+        )
+
+    # Translate Anthropic request to pipeline format
+    try:
+        fields = anthropic_request_to_fields(body)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid Anthropic request: {e}")
+
+    # Anthropic requires max_tokens
+    if "max_tokens" not in fields or not fields["max_tokens"]:
+        raise HTTPException(
+            status_code=400,
+            detail="max_tokens is required for Anthropic-compatible requests",
+        )
+
+    lc_request = LayerCacheRequest(
+        model=fields["model"],
+        messages=fields["messages"],
+        temperature=fields.get("temperature"),
+        top_p=fields.get("top_p"),
+        max_tokens=fields["max_tokens"],
+        stream=fields.get("stream", False),
+        tools=fields.get("tools"),
+        tool_choice=fields.get("tool_choice"),
+        user=fields.get("user"),
+        stop=fields.get("stop"),
+    )
+
+    if lc_request.stream:
+        return StreamingResponse(
+            _handle_anthropic_stream(lc_request, api_key),
+            media_type="text/event-stream",
+        )
+    else:
+        response = await _pipeline.process_request(lc_request, api_key)
+        anthropic_response = openai_response_to_anthropic(response)
+        return JSONResponse(content=anthropic_response)
+
+
+async def _handle_anthropic_stream(
+    lc_request: LayerCacheRequest,
+    api_key: str,
+) -> AsyncIterator[str]:
+    """Handle an Anthropic-format streaming request.
+
+    Converts each pipeline chunk from OpenAI streaming format to
+    Anthropic SSE events on the fly.
+    """
+    translator = AnthropicStreamTranslator(model=lc_request.model)
+
+    def _sse(event: str, data: dict[str, Any]) -> str:
+        return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+    try:
+        async for chunk in _pipeline.process_streaming_request(lc_request, api_key):
+            if isinstance(chunk, dict):
+                for event in translator.translate(chunk):
+                    yield event
+            elif isinstance(chunk, str):
+                if not translator._has_emitted_start:
+                    fake = {"choices": [{"delta": {"content": chunk}, "finish_reason": None}]}
+                    for event in translator.translate(fake):
+                        yield event
+                else:
+                    yield _sse(
+                        "content_block_delta",
+                        {
+                            "type": "content_block_delta",
+                            "index": 0,
+                            "delta": {"type": "text_delta", "text": chunk},
+                        },
+                    )
+
+        if not translator._has_emitted_start:
+            msg_id = f"msg_{id(translator)}"
+            msg: dict[str, Any] = {
+                "id": msg_id,
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "model": lc_request.model,
+                "stop_reason": None,
+                "stop_sequence": None,
+                "usage": {"input_tokens": 0, "output_tokens": 0},
+            }
+            yield _sse("message_start", {"type": "message_start", "message": msg})
+            yield _sse(
+                "content_block_start",
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                },
+            )
+            yield _sse("content_block_stop", {"type": "content_block_stop", "index": 0})
+        if not translator._has_emitted_stop:
+            yield _sse(
+                "message_delta",
+                {
+                    "type": "message_delta",
+                    "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+                    "usage": {"input_tokens": 0, "output_tokens": 0},
+                },
+            )
+            yield _sse("message_stop", {"type": "message_stop"})
+    except Exception:
+        logger.exception("Anthropic streaming failed")
+        error_body = json.dumps(
+            {
+                "type": "error",
+                "error": {"type": "api_error", "message": "Streaming error"},
+            }
+        )
+        yield f"event: error\ndata: {error_body}\n\n"
 
 
 @app.get("/v1/models")

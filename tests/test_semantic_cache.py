@@ -1,17 +1,16 @@
 """Tests for the Semantic Cache."""
 
-import asyncio
-import hashlib
-import json
-import time
+from unittest.mock import AsyncMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
-from layercache.models import StratifiedPrompt, LayerType
 from layercache.cache.semantic import SemanticCache, cosine_similarity
+from layercache.models import LayerType, StratifiedPrompt
 
 
-def _make_prompt(system: str = "You are helpful.", query: str = "What is Python?") -> StratifiedPrompt:
+def _make_prompt(
+    system: str = "You are helpful.", query: str = "What is Python?"
+) -> StratifiedPrompt:
     """Create a basic prompt for testing."""
     prompt = StratifiedPrompt()
     prompt.add_message(LayerType.SYSTEM, "system", system)

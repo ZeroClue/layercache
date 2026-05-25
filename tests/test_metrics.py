@@ -1,6 +1,7 @@
 """Tests for the Metrics Collector."""
 
 import pytest
+
 from layercache.metrics.collector import MetricsCollector, RequestTimer
 
 

@@ -1,11 +1,10 @@
 """Tests for the Provider Adapters."""
 
-import pytest
-from layercache.models import StratifiedPrompt, LayerType
-from layercache.adapters.anthropic import AnthropicAdapter
-from layercache.adapters.openai import OpenAIAdapter
-from layercache.adapters.gemini import GeminiAdapter
 from layercache.adapters import detect_provider, get_adapter
+from layercache.adapters.anthropic import AnthropicAdapter
+from layercache.adapters.gemini import GeminiAdapter
+from layercache.adapters.openai import OpenAIAdapter
+from layercache.models import LayerType, StratifiedPrompt
 
 
 def _make_prompt() -> StratifiedPrompt:
