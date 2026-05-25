@@ -213,9 +213,7 @@ class SemanticCache:
         if query_embedding is None:
             return ""
 
-        entry_id = hashlib.sha256(
-            f"{prefix_hash}:{query_text}:{time.time()}".encode()
-        ).hexdigest()
+        entry_id = hashlib.sha256(f"{prefix_hash}:{query_text}:{time.time()}".encode()).hexdigest()
 
         now = time.time()
         effective_ttl = ttl if ttl is not None else self.default_ttl
@@ -300,9 +298,7 @@ class SemanticCache:
 
         now = time.time()
 
-        cursor = await self._db.execute(
-            "SELECT COUNT(*) as total FROM semantic_cache"
-        )
+        cursor = await self._db.execute("SELECT COUNT(*) as total FROM semantic_cache")
         row = await cursor.fetchone()
         total = row["total"] if row else 0
 

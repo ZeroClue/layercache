@@ -17,39 +17,31 @@ logger = logging.getLogger(__name__)
 # Global embedder instance (lazy-loaded)
 _embedder_instance: Any = None
 _model_name: str = "BAAI/bge-small-en-v1.5"
-_executor: ProcessPoolExecutor | None = None
+
+# Subprocess-level model cache — persists across calls within each worker
+_subprocess_embedders: dict[str, Any] = {}
 
 
-def _init_embedder(model_name: str) -> Any:
-    """Initialize the FastEmbed model in a subprocess."""
-    try:
+def _get_embedder(model_name: str) -> Any:
+    """Get or create a FastEmbed model, cached in the subprocess."""
+    if model_name not in _subprocess_embedders:
         from fastembed import TextEmbedding
-        return TextEmbedding(model_name)
-    except ImportError:
-        logger.warning(
-            "fastembed not installed, using fallback embedding. "
-            "Install with: pip install fastembed"
-        )
-        return None
+
+        _subprocess_embedders[model_name] = TextEmbedding(model_name)
+    return _subprocess_embedders[model_name]
 
 
 def _embed_texts_sync(model_name: str, texts: list[str]) -> list[list[float]]:
     """Synchronous embedding function for use in executor."""
-    try:
-        from fastembed import TextEmbedding
-        embedder = TextEmbedding(model_name)
-        embeddings = list(embedder.embed(texts))
-        return [e.tolist() for e in embeddings]
-    except Exception as e:
-        logger.error("Embedding failed: %s", e)
-        # Return zero vectors as fallback
-        return [[0.0] * 384 for _ in texts]
+    embedder = _get_embedder(model_name)
+    embeddings = list(embedder.embed(texts))
+    return [e.tolist() for e in embeddings]
 
 
 def _embed_single_sync(model_name: str, text: str) -> list[float]:
     """Embed a single text synchronously."""
     results = _embed_texts_sync(model_name, [text])
-    return results[0] if results else [0.0] * 384
+    return results[0]
 
 
 class Embedder:
@@ -64,6 +56,14 @@ class Embedder:
         model_name: str = "BAAI/bge-small-en-v1.5",
         max_workers: int = 2,
     ) -> None:
+        # Verify fastembed is available at construction time
+        try:
+            from fastembed import TextEmbedding  # noqa: F401
+        except ImportError:
+            raise ImportError(
+                "fastembed is required for semantic caching. Install with: pip install fastembed"
+            )
+
         self.model_name = model_name
         self._executor = ProcessPoolExecutor(max_workers=max_workers)
         self._dimension = 384  # bge-small-en-v1.5 dimension
@@ -78,17 +78,16 @@ class Embedder:
 
         Returns:
             Embedding vector as a list of floats.
+
+        Raises:
+            RuntimeError: If the subprocess task fails.
         """
         loop = asyncio.get_running_loop()
-        try:
-            result = await loop.run_in_executor(
-                self._executor,
-                partial(_embed_single_sync, self.model_name, text),
-            )
-            return result
-        except Exception as e:
-            logger.error("Async embedding failed: %s", e)
-            return [0.0] * self._dimension
+        result = await loop.run_in_executor(
+            self._executor,
+            partial(_embed_single_sync, self.model_name, text),
+        )
+        return result
 
     async def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for multiple texts.
@@ -98,20 +97,19 @@ class Embedder:
 
         Returns:
             List of embedding vectors.
+
+        Raises:
+            RuntimeError: If the subprocess task fails.
         """
         if not texts:
             return []
 
         loop = asyncio.get_running_loop()
-        try:
-            results = await loop.run_in_executor(
-                self._executor,
-                partial(_embed_texts_sync, self.model_name, texts),
-            )
-            return results
-        except Exception as e:
-            logger.error("Async batch embedding failed: %s", e)
-            return [[0.0] * self._dimension for _ in texts]
+        results = await loop.run_in_executor(
+            self._executor,
+            partial(_embed_texts_sync, self.model_name, texts),
+        )
+        return results
 
     @property
     def dimension(self) -> int:

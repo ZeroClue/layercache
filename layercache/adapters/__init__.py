@@ -50,9 +50,9 @@ def detect_provider(model_name: str) -> str:
             if known_prefix == prefix:
                 return provider
 
-    # Check model name patterns
+    # Check model name patterns (use startswith to avoid substring false positives)
     for known_prefix, provider in PROVIDER_PREFIXES.items():
-        if known_prefix in model_lower:
+        if model_lower.startswith(known_prefix):
             return provider
 
     # Default to OpenAI

@@ -11,6 +11,9 @@ from .base import BaseAdapter
 
 logger = logging.getLogger(__name__)
 
+# Default TTL for Gemini CachedContent resources (1 hour)
+_DEFAULT_CACHE_TTL = 3600
+
 
 class GeminiAdapter(BaseAdapter):
     """Adapter for Google Gemini's explicit content caching.
@@ -30,7 +33,7 @@ class GeminiAdapter(BaseAdapter):
 
     def __init__(self) -> None:
         self._cache_map: dict[str, str] = {}  # prefix_hash -> cached_content_name
-        self._pending_creates: set[str] = set()  # hashes currently being created
+        self._pending_creates: set[str] = set()  # hashes being created
 
     def inject_markers(
         self,
@@ -43,7 +46,7 @@ class GeminiAdapter(BaseAdapter):
         1. Compute the prefix hash (L0 + L1)
         2. Check if we have a cached content resource
         3. If yes, use it and only send L2+ content
-        4. If no, send full content and trigger async cache creation
+        4. If no, send full content (cache creation is triggered by the pipeline)
         """
         prefix_hash = self._compute_prefix_hash(prompt)
 
@@ -59,15 +62,91 @@ class GeminiAdapter(BaseAdapter):
             all_messages = prompt.reassemble()
             payload["contents"] = self._convert_to_gemini_format(all_messages)
 
-            # Mark for async cache creation
-            if prefix_hash not in self._pending_creates:
-                self._pending_creates.add(prefix_hash)
-                logger.info(
-                    "Gemini: Will create CachedContent for prefix hash %s in background",
-                    prefix_hash[:12],
-                )
-
         return payload
+
+    async def create_cached_content(
+        self,
+        prompt: StratifiedPrompt,
+        api_key: str,
+        model: str,
+        ttl_seconds: int = _DEFAULT_CACHE_TTL,
+    ) -> str | None:
+        """Create a Gemini CachedContent resource for the L0+L1 prefix.
+
+        Called by the pipeline after the first successful LLM response.
+        Subsequent requests will use the cached content and only send L2+.
+        """
+        import httpx
+
+        prefix_hash = self._compute_prefix_hash(prompt)
+
+        # Already cached or creation already in flight
+        if prefix_hash in self._cache_map:
+            return self._cache_map[prefix_hash]
+        if prefix_hash in self._pending_creates:
+            return None
+
+        # Build system instruction from L0 (system role messages)
+        system_parts: list[dict[str, str]] = []
+        for msg in sorted(prompt.layers[LayerType.SYSTEM], key=lambda m: m.content_hash()):
+            system_parts.append({"text": str(msg.content)})
+
+        # Build cached contents from L1 (context messages)
+        contents: list[dict[str, Any]] = []
+        for msg in sorted(prompt.layers[LayerType.CONTEXT], key=lambda m: m.content_hash()):
+            contents.append(
+                {
+                    "role": "user",
+                    "parts": [{"text": str(msg.content)}],
+                }
+            )
+
+        # Nothing meaningful to cache
+        if not system_parts and not contents:
+            return None
+
+        # Normalise model name: strip provider prefix, add models/ prefix
+        gemini_model = model
+        if "/" in gemini_model:
+            gemini_model = gemini_model.split("/", 1)[1]
+        if not gemini_model.startswith("models/"):
+            gemini_model = f"models/{gemini_model}"
+
+        self._pending_creates.add(prefix_hash)
+        try:
+            body: dict[str, Any] = {
+                "model": gemini_model,
+                "displayName": f"layercache-{prefix_hash[:12]}",
+                "ttl": f"{ttl_seconds}s",
+            }
+            if system_parts:
+                body["systemInstruction"] = {"parts": system_parts}
+            if contents:
+                body["contents"] = contents
+
+            url = "https://generativelanguage.googleapis.com/v1beta/cachedContents"
+
+            async with httpx.AsyncClient(timeout=30) as client:
+                response = await client.post(
+                    url,
+                    json=body,
+                    headers={"X-Goog-Api-Key": api_key},
+                )
+                response.raise_for_status()
+                result = response.json()
+
+            cached_content_name: str | None = result.get("name")
+            if cached_content_name:
+                self.mark_cache_created(prefix_hash, cached_content_name)
+                return cached_content_name
+
+            logger.warning("Gemini CachedContent API returned no name: %s", result)
+        except Exception as e:
+            logger.warning("Gemini CachedContent creation failed: %s", e)
+        finally:
+            self._pending_creates.discard(prefix_hash)
+
+        return None
 
     def extract_cache_metrics(self, response: dict[str, Any]) -> dict[str, Any]:
         """Extract cache usage from Gemini's response.
@@ -83,14 +162,9 @@ class GeminiAdapter(BaseAdapter):
             "output_tokens": usage_metadata.get("candidatesTokenCount", 0),
         }
 
-    def get_pending_creates(self) -> set[str]:
-        """Get prefix hashes that need CachedContent creation."""
-        return self._pending_creates
-
     def mark_cache_created(self, prefix_hash: str, cached_content_name: str) -> None:
         """Register a newly created CachedContent resource."""
         self._cache_map[prefix_hash] = cached_content_name
-        self._pending_creates.discard(prefix_hash)
         logger.info(
             "Gemini: Registered CachedContent '%s' for prefix hash %s",
             cached_content_name,
@@ -138,9 +212,11 @@ class GeminiAdapter(BaseAdapter):
         gemini_contents = []
         for msg in messages:
             role = role_map.get(msg.get("role", "user"), "user")
-            gemini_contents.append({
-                "role": role,
-                "parts": [{"text": str(msg.get("content", ""))}],
-            })
+            gemini_contents.append(
+                {
+                    "role": role,
+                    "parts": [{"text": str(msg.get("content", ""))}],
+                }
+            )
 
         return gemini_contents

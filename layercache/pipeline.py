@@ -8,11 +8,14 @@ The pipeline processes each incoming request through these stages:
 5. Cache Marker Injection (provider-specific)
 6. Provider Routing (via LiteLLM)
 7. Response Handling (metrics, cache storage)
+8. Background cache creation (provider-specific, e.g. Gemini CachedContent)
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import re
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -26,6 +29,32 @@ from .registry.prompt_registry import PromptRegistry
 from .stratifier import Stratifier
 
 logger = logging.getLogger(__name__)
+
+# Model names must match known provider prefixes to block SSRF via LiteLLM
+_ALLOWED_MODEL_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]*(/[a-zA-Z][a-zA-Z0-9_.-]+)?$")
+
+
+def validate_model_name(model: str) -> None:
+    """Reject model names that look like URLs, IPs, or paths (SSRF guard).
+
+    Raises ValueError on invalid input.
+    """
+    if not model:
+        raise ValueError("model is required")
+    if "://" in model or "@" in model or ".." in model:
+        raise ValueError(f"Rejected suspicious model name: {model}")
+    if not _ALLOWED_MODEL_RE.match(model):
+        raise ValueError(f"Model name does not match allowed pattern: {model}")
+
+
+def _log_task_error(task: asyncio.Task[Any]) -> None:
+    """Log any exception from a fire-and-forget background task."""
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        logger.error("Background task failed: %s", e, exc_info=True)
 
 
 class RequestPipeline:
@@ -43,6 +72,8 @@ class RequestPipeline:
         semantic_cache: SemanticCache | None,
         prompt_registry: PromptRegistry | None,
         metrics: MetricsCollector,
+        timeout: int = 120,
+        max_retries: int = 3,
     ) -> None:
         self.stratifier = stratifier
         self.canonicalizer = canonicalizer
@@ -50,6 +81,8 @@ class RequestPipeline:
         self.semantic_cache = semantic_cache
         self.prompt_registry = prompt_registry
         self.metrics = metrics
+        self._timeout = timeout
+        self._max_retries = max_retries
 
     async def process_request(
         self,
@@ -82,7 +115,12 @@ class RequestPipeline:
                     layer_hints=request.lc_layer_hints,
                 )
 
-                cache_entry = await self.semantic_cache.lookup(temp_prompt, request.model)
+                # Canonicalize the temp prompt so its hash matches what will be stored
+                lookup_prompt, _canonical_tools = self.canonicalizer.canonicalize(
+                    temp_prompt, request.tools
+                )
+
+                cache_entry = await self.semantic_cache.lookup(lookup_prompt, request.model)
                 if cache_entry:
                     self.metrics.record_semantic_cache_hit()
                     logger.info(
@@ -90,7 +128,6 @@ class RequestPipeline:
                         request.model,
                         cache_entry.prefix_hash[:12],
                     )
-                    timer.__exit__(None, None, None)
                     return cache_entry.response_payload
 
                 self.metrics.record_semantic_cache_miss()
@@ -148,6 +185,13 @@ class RequestPipeline:
                 except Exception as e:
                     logger.warning("Failed to store in semantic cache: %s", e)
 
+            # Stage 9: Trigger provider-specific background cache creation
+            if hasattr(adapter, "create_cached_content"):
+                task = asyncio.create_task(
+                    adapter.create_cached_content(prompt, api_key, request.model)
+                )
+                task.add_done_callback(_log_task_error)
+
             logger.info(
                 "Request completed: model=%s, input=%d, output=%d, cached=%d, duration=%.3fs",
                 request.model,
@@ -193,12 +237,15 @@ class RequestPipeline:
                     template_name=request.lc_template,
                     layer_hints=request.lc_layer_hints,
                 )
-                cache_entry = await self.semantic_cache.lookup(temp_prompt, request.model)
+
+                lookup_prompt, _canonical_tools = self.canonicalizer.canonicalize(
+                    temp_prompt, request.tools
+                )
+
+                cache_entry = await self.semantic_cache.lookup(lookup_prompt, request.model)
                 if cache_entry:
                     self.metrics.record_semantic_cache_hit()
                     logger.info("Semantic cache HIT for streaming request")
-                    timer.__exit__(None, None, None)
-                    # Stream cached response with artificial chunks
                     async for chunk in self._stream_cached_response(cache_entry.response_payload):
                         yield chunk
                     return
@@ -223,15 +270,50 @@ class RequestPipeline:
             payload = adapter.inject_markers(prompt, payload)
 
             # Stage 7: Stream from LLM
-
-            async for chunk in self._stream_llm(payload, api_key):
+            final_chunk: dict[str, Any] | None = None
+            async for chunk in self._stream_llm(payload, api_key, provider):
+                # Keep the last chunk for metrics (it carries usage data)
+                if isinstance(chunk, dict):
+                    final_chunk = chunk
                 yield chunk
 
-            # Note: For streaming, detailed token metrics come in the final chunk
-            # The streaming handler in main.py will parse and record these
+            # Stage 8: Record metrics from the final streaming chunk
+            if final_chunk and isinstance(final_chunk, dict):
+                choices = final_chunk.get("choices", [{}])
+                usage = final_chunk.get("usage", {})
 
-            timer.__exit__(None, None, None)
+                if usage:
+                    input_tokens = usage.get("prompt_tokens", 0)
+                    output_tokens = usage.get("completion_tokens", 0)
+                else:
+                    last_choice = choices[-1] if choices else {}
+                    if isinstance(last_choice, dict):
+                        choice_usage = last_choice.get("usage", {})
+                        input_tokens = choice_usage.get("prompt_tokens", 0)
+                        output_tokens = choice_usage.get("completion_tokens", 0)
+                    else:
+                        input_tokens = output_tokens = 0
 
+                cache_metrics = adapter.extract_cache_metrics(final_chunk)
+                self.metrics.record_request(
+                    model=request.model,
+                    input_tokens=input_tokens or cache_metrics.get("input_tokens", 0),
+                    output_tokens=output_tokens or cache_metrics.get("output_tokens", 0),
+                    cache_read_tokens=cache_metrics.get("cache_read_input_tokens", 0),
+                    cache_creation_tokens=cache_metrics.get("cache_creation_input_tokens", 0),
+                    duration_seconds=timer.duration,
+                )
+
+            # Stage 9: Trigger provider-specific background cache creation
+            if hasattr(adapter, "create_cached_content"):
+                task = asyncio.create_task(
+                    adapter.create_cached_content(prompt, api_key, request.model)
+                )
+                task.add_done_callback(_log_task_error)
+
+        except asyncio.CancelledError:
+            logger.warning("Streaming request cancelled by client")
+            raise
         except Exception as e:
             logger.error("Streaming pipeline error: %s", e, exc_info=True)
             raise
@@ -244,17 +326,14 @@ class RequestPipeline:
         request: LayerCacheRequest,
     ) -> None:
         """Apply requested enhancements to the prompt."""
-        # Check for dynamic_few_shot which needs async embedding
         if "dynamic_few_shot" in request.lc_enhancements:
             few_shot = self.enhancements.get("dynamic_few_shot")
-            if few_shot and hasattr(few_shot, "apply_async"):
-                # Remove from list and apply async
+            if few_shot is not None and hasattr(few_shot, "apply_async"):
                 names = [n for n in request.lc_enhancements if n != "dynamic_few_shot"]
                 self.enhancements.apply_enhancements(prompt, names, model=request.model)
                 await few_shot.apply_async(prompt, model=request.model)
                 return
 
-        # Standard synchronous enhancement application
         self.enhancements.apply_enhancements(prompt, request.lc_enhancements, model=request.model)
 
     def _build_payload(
@@ -290,9 +369,12 @@ class RequestPipeline:
         """Route the request to the LLM provider via LiteLLM."""
         try:
             import litellm
+
             response = await litellm.acompletion(
                 **payload,
                 api_key=api_key,
+                timeout=self._timeout,
+                num_retries=self._max_retries,
             )
             return response.model_dump()
         except Exception as e:
@@ -300,14 +382,20 @@ class RequestPipeline:
             raise
 
     async def _stream_llm(
-        self, payload: dict[str, Any], api_key: str
+        self,
+        payload: dict[str, Any],
+        api_key: str,
+        provider: str = "",
     ) -> AsyncIterator[dict[str, Any] | str]:
         """Stream responses from the LLM provider via LiteLLM."""
         try:
             import litellm
+
             response = await litellm.acompletion(
                 **payload,
                 api_key=api_key,
+                timeout=self._timeout,
+                num_retries=self._max_retries,
             )
             async for chunk in response:
                 yield chunk.model_dump()
@@ -318,8 +406,6 @@ class RequestPipeline:
     @staticmethod
     async def _stream_cached_response(response: dict[str, Any]) -> AsyncIterator[str]:
         """Stream a cached response with artificial delays."""
-        import asyncio
-
         choices = response.get("choices", [])
         if not choices:
             return
@@ -328,10 +414,8 @@ class RequestPipeline:
         content = message.get("content", "")
 
         if content:
-            # Split into small chunks and stream with small delays
             chunk_size = 20
             for i in range(0, len(content), chunk_size):
                 chunk_text = content[i : i + chunk_size]
-                # Format as SSE-like data
                 yield chunk_text
                 await asyncio.sleep(0.01)

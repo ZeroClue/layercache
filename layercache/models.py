@@ -53,10 +53,12 @@ class StratifiedMessage(BaseModel):
         import hashlib
         import json
 
-        content_str = json.dumps(
-            self.content, sort_keys=True, separators=(",", ":")
-        ) if isinstance(self.content, (dict, list)) else str(self.content)
-        return hashlib.md5(f"{self.role}:{content_str}".encode()).hexdigest()
+        content_str = (
+            json.dumps(self.content, sort_keys=True, separators=(",", ":"))
+            if isinstance(self.content, (dict, list))
+            else str(self.content)
+        )
+        return hashlib.sha256(f"{self.role}:{content_str}".encode()).hexdigest()[:16]
 
 
 class StratifiedPrompt(BaseModel):
@@ -71,8 +73,14 @@ class StratifiedPrompt(BaseModel):
         default_factory=lambda: {lt: [] for lt in LayerType}
     )
 
-    def add_message(self, layer: LayerType, role: str, content: str | list[dict],
-                    original_index: int = 0, metadata: dict[str, Any] | None = None) -> None:
+    def add_message(
+        self,
+        layer: LayerType,
+        role: str,
+        content: str | list[dict],
+        original_index: int = 0,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
         """Add a message to a specific layer."""
         msg = StratifiedMessage(
             layer=layer,
@@ -115,9 +123,11 @@ class StratifiedPrompt(BaseModel):
         prefix_content: list[str] = []
         for lt in stable_layers:
             for msg in sorted(self.layers[lt], key=lambda m: m.content_hash()):
-                content_str = json.dumps(
-                    msg.content, sort_keys=True, separators=(",", ":")
-                ) if isinstance(msg.content, (dict, list)) else str(msg.content)
+                content_str = (
+                    json.dumps(msg.content, sort_keys=True, separators=(",", ":"))
+                    if isinstance(msg.content, (dict, list))
+                    else str(msg.content)
+                )
                 prefix_content.append(f"{msg.role}:{content_str}")
 
         combined = "|".join(prefix_content)
@@ -134,6 +144,7 @@ class StratifiedPrompt(BaseModel):
     def clone(self) -> StratifiedPrompt:
         """Create a deep copy of this stratified prompt."""
         import copy
+
         return copy.deepcopy(self)
 
 
@@ -145,33 +156,23 @@ class LayerCacheRequest(BaseModel):
     """
 
     # Standard OpenAI fields
-    model: str
-    messages: list[dict[str, Any]]
+    model: str = Field(max_length=256)
+    messages: list[dict[str, Any]] = Field(max_length=512)
     temperature: float | None = None
     top_p: float | None = None
     max_tokens: int | None = None
     stream: bool = False
-    tools: list[dict[str, Any]] | None = None
+    tools: list[dict[str, Any]] | None = Field(default=None, max_length=256)
     tool_choice: str | dict[str, Any] | None = None
     response_format: dict[str, Any] | None = None
 
     # LayerCache Extensions
-    lc_template: str | None = None
-    lc_enhancements: list[str] = Field(default_factory=list)
+    lc_template: str | None = Field(default=None, max_length=128)
+    lc_enhancements: list[str] = Field(default_factory=list, max_length=32)
     lc_cache_ttl: int = 300
-    lc_layer_hints: dict[int, str] | None = None
+    lc_layer_hints: dict[int, str] | None = Field(default=None, max_length=512)
     lc_skip_semantic_cache: bool = False
     lc_bypass_cache: bool = False
-
-
-class CacheMetrics(BaseModel):
-    """Cache performance metrics for a single request or aggregate."""
-
-    provider_token_cache_hit_rate: float = 0.0
-    semantic_cache_hit_rate: float = 0.0
-    estimated_tokens_saved: int = 0
-    estimated_cost_saved_usd: float = 0.0
-    by_model: dict[str, dict[str, float]] = Field(default_factory=dict)
 
 
 class CacheEntry(BaseModel):

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.0.0-blue" alt="Version 1.0.0">
+  <img src="https://img.shields.io/badge/version-1.1.0-blue" alt="Version 1.1.0">
   <img src="https://img.shields.io/badge/python-3.11+-green" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/tests-73%20passing-brightgreen" alt="73 Tests Passing">
   <img src="https://img.shields.io/badge/license-MIT-orange" alt="MIT License">
@@ -122,7 +122,7 @@ uvicorn layercache.main:app --host 0.0.0.0 --port 8000
 
 ```bash
 curl http://localhost:8000/health
-# {"status":"healthy","version":"1.0.0","semantic_cache":true}
+# {"status":"healthy","version":"1.1.0","semantic_cache":true}
 ```
 
 ## Usage Examples

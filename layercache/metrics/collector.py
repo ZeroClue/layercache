@@ -81,12 +81,8 @@ class MetricsCollector:
 
         # Per-model tracking
         self._model_requests[model] = self._model_requests.get(model, 0) + 1
-        self._model_input_tokens[model] = (
-            self._model_input_tokens.get(model, 0) + input_tokens
-        )
-        self._model_output_tokens[model] = (
-            self._model_output_tokens.get(model, 0) + output_tokens
-        )
+        self._model_input_tokens[model] = self._model_input_tokens.get(model, 0) + input_tokens
+        self._model_output_tokens[model] = self._model_output_tokens.get(model, 0) + output_tokens
         self._model_cache_read_tokens[model] = (
             self._model_cache_read_tokens.get(model, 0) + cache_read_tokens
         )
@@ -97,14 +93,10 @@ class MetricsCollector:
 
         # Cost estimation
         pricing = self._get_pricing(model)
-        cost_saved = (cache_read_tokens / 1_000_000) * (
-            pricing["input"] - pricing["cache_read"]
-        )
-        (input_tokens / 1_000_000) * pricing["input"]
-        cost_cached = (
-            (cache_read_tokens / 1_000_000) * pricing["cache_read"]
-            + ((input_tokens - cache_read_tokens) / 1_000_000) * pricing["input"]
-        )
+        cost_saved = (cache_read_tokens / 1_000_000) * (pricing["input"] - pricing["cache_read"])
+        cost_cached = (cache_read_tokens / 1_000_000) * pricing["cache_read"] + (
+            (input_tokens - cache_read_tokens) / 1_000_000
+        ) * pricing["input"]
         self._total_cost_saved_usd += cost_saved
         self._total_cost_usd += cost_cached + (output_tokens / 1_000_000) * pricing["output"]
 
@@ -134,9 +126,7 @@ class MetricsCollector:
         )
 
         semantic_hit_rate = (
-            self._semantic_cache_hits_total / semantic_total
-            if semantic_total > 0
-            else 0.0
+            self._semantic_cache_hits_total / semantic_total if semantic_total > 0 else 0.0
         )
 
         avg_latency = (
@@ -146,9 +136,7 @@ class MetricsCollector:
         )
 
         p95_latency = (
-            self._percentile(self._request_latencies, 95)
-            if self._request_latencies
-            else 0.0
+            self._percentile(self._request_latencies, 95) if self._request_latencies else 0.0
         )
 
         by_model: dict[str, dict[str, float]] = {}
@@ -230,10 +218,7 @@ class MetricsCollector:
     def _get_pricing(model: str) -> dict[str, float]:
         """Get pricing for a model, with fuzzy matching."""
         model_lower = (
-            model.lower()
-            .replace("anthropic/", "")
-            .replace("openai/", "")
-            .replace("gemini/", "")
+            model.lower().replace("anthropic/", "").replace("openai/", "").replace("gemini/", "")
         )
 
         # Direct match

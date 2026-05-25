@@ -47,51 +47,6 @@ class BaseAdapter(ABC):
         """
         ...
 
-    def _get_stable_layer_boundary_indices(self, prompt: StratifiedPrompt) -> list[int]:
-        """Calculate the indices of the last message in each stable layer (L0, L1, L2).
-
-        Returns a sorted list of indices where cache breakpoints should be placed.
-        """
-        reassembled = prompt.reassemble()
-        boundaries: list[int] = []
-        current_layer = None
-
-        stable_layers = {LayerType.SYSTEM, LayerType.CONTEXT, LayerType.SESSION}
-
-        for i, msg in enumerate(reassembled):
-            msg_layer = self._infer_layer_from_position(prompt, i, len(reassembled))
-            if msg_layer in stable_layers and msg_layer != current_layer:
-                # This is the start of a new stable layer; the boundary is at i
-                boundaries.append(i)
-                current_layer = msg_layer
-
-        # Return the last index of each stable block (boundary + count - 1)
-        # Simplified: return the last stable message index
-        last_stable = -1
-        for i, msg in enumerate(reassembled):
-            msg_layer = self._infer_layer_from_position(prompt, i, len(reassembled))
-            if msg_layer in stable_layers:
-                last_stable = i
-
-        return boundaries + ([last_stable] if last_stable >= 0 else [])
-
-    @staticmethod
-    def _infer_layer_from_position(
-        prompt: StratifiedPrompt,
-        index: int,
-        total: int,
-    ) -> LayerType:
-        """Infer which layer a message at a given position in the reassembled output belongs to."""
-        # Walk through the layers in order and count messages
-        cumulative = 0
-        for layer_type in sorted(LayerType, key=lambda lt: lt.sort_order):
-            layer_msgs = sorted(prompt.layers[layer_type], key=lambda m: m.content_hash())
-            layer_count = len(layer_msgs)
-            if cumulative + layer_count > index:
-                return layer_type
-            cumulative += layer_count
-        return LayerType.USER
-
     def _reassemble_with_metadata(
         self,
         prompt: StratifiedPrompt,

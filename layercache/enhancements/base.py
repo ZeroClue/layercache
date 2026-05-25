@@ -141,9 +141,8 @@ class EnhancementRegistry:
                 enhancement.apply(prompt, **kwargs)
             else:
                 import logging
-                logging.getLogger(__name__).warning(
-                    "Unknown enhancement '%s', skipping", name
-                )
+
+                logging.getLogger(__name__).warning("Unknown enhancement '%s', skipping", name)
         return prompt
 
     def list_enhancements(self) -> list[str]:

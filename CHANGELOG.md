@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.0] - 2026-05-26
+
+### Added
+- CORS middleware (all origins allowed — proxy pattern)
+- Request ID middleware (`X-Request-ID` header, propagated to error responses and logs)
+- Provider API key validation at startup (logs warning if configured keys are missing)
+- Background Gemini CachedContent creation (`create_cached_content` via Gemini API with `X-Goog-Api-Key` header)
+- Error handler for fire-and-forget background tasks (`_log_task_error` callback)
+- `asyncio.CancelledError` handling in streaming path (logs client disconnect warnings)
+- Token metrics recording for streaming requests (parses final chunk's `usage` data)
+- Configurable `log_level` from `layercache.yaml` is now applied at startup
+- Configurable `timeout` and `max_retries` from `ProviderConfig` are now passed to LiteLLM
+- Warning log when config YAML file is missing (`config.py`)
+
+### Changed
+- **Security**: Gemini CachedContent API key moved from URL query parameter to `X-Goog-Api-Key` header
+- **Security**: Empty API key now returns HTTP 401 with a clear error message (was opaque LiteLLM auth failure)
+- **Embedder**: FastEmbed model now cached in subprocess via `_subprocess_embedders` dict (was re-initialized on every call)
+- **Embedder**: Removed silent zero-vector fallback on embedding failures (exceptions now propagate)
+- **Embedder**: Missing `fastembed` now raises `ImportError` at construction (was silent failure)
+- **Pipeline**: `temp_prompt` canonicalized before semantic cache lookup (fixes permanent cache misses for non-normalized whitespace)
+- **Pricing**: Model pricing map updated (fixed sort order for correct cache read vs input pricing)
+- **Config**: Moved `import yaml` and `from pydantic` above `logger` statement to satisfy E402
+- **Content hash**: Replaced MD5 with SHA-256[:16] (`models.py`)
+- **Prometheus endpoint**: Changed from `JSONResponse` to plain `Response` with `text/plain` media type
+
+### Fixed
+- Dead floating expression in `metrics/collector.py` (`(input_tokens / 1_000_000) * pricing["input"]`)
+- `_apply_enhancements` early-return bug (properly checks `few_shot is not None` before async dispatch)
+- `_verify_proxy_key` docstring (`auth` → `proxy_api_key` in config comment)
+- Dead `CacheMetrics` model removed from `models.py`
+
+### Removed
+- Dead `CacheMetrics` Pydantic model
+- Dead `_init_embedder` function from `embedder.py`
+- Orphan `import asyncio` inside `_stream_cached_response` (now at module level)
+
 ## [1.0.0] - 2025-05-26
 
 ### Added

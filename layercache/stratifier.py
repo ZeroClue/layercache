@@ -10,10 +10,13 @@ with messages organized by layer. It supports three classification methods:
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
 from .models import LayerType, StratifiedPrompt
+
+logger = logging.getLogger(__name__)
 
 # Mapping from string names (as used in lc_layer_hints) to LayerType enum values
 _LAYER_NAME_MAP: dict[str, LayerType] = {
@@ -105,7 +108,10 @@ class Stratifier:
                     msg_data.get("content", ""),
                 )
         except Exception:
-            # If template not found, fall back to heuristic
+            logger.exception(
+                "Template '%s' failed to load, falling back to heuristic",
+                template_name,
+            )
             self._stratify_heuristic(prompt, messages)
             return
 
@@ -118,11 +124,20 @@ class Stratifier:
         messages: list[dict[str, Any]],
         layer_hints: dict[int, str],
     ) -> None:
-        """Stratify using explicit layer hints from the client."""
+        """Stratify using explicit layer hints from the client.
+
+        Cache poisoning guard: non-system messages cannot be explicitly
+        assigned to L0 (SYSTEM) or L1 (CONTEXT), since those layers
+        contribute to the prefix hash.
+        """
         for i, msg in enumerate(messages):
             layer_name = layer_hints.get(i)
             if layer_name and layer_name in _LAYER_NAME_MAP:
                 layer = _LAYER_NAME_MAP[layer_name]
+                role = msg.get("role", "user")
+                # Guard: only system-role messages can go into L0/L1
+                if role != "system" and layer in (LayerType.SYSTEM, LayerType.CONTEXT):
+                    layer = LayerType.SESSION
             else:
                 # Fall back to heuristic for un-hinted messages
                 layer = self._classify_single_message(msg, i, len(messages))
@@ -198,18 +213,23 @@ class Stratifier:
         prompt: StratifiedPrompt,
         messages: list[dict[str, Any]],
     ) -> None:
-        """Classify client messages when template mode is used (L0/L1 already set)."""
+        """Classify client messages when template mode is used (L0/L1 already set).
+
+        Cache poisoning guard: in template mode the registry owns L0/L1.
+        Client system messages are placed in L2 (SESSION) so they cannot
+        affect the prefix hash.
+        """
         total = len(messages)
         for i, msg in enumerate(messages):
             role = msg.get("role", "user")
             content = msg.get("content", "")
             content_str = str(content) if content else ""
 
-            # Skip system messages (template already provided L0/L1)
+            # In template mode, client system messages go to L2 (session)
+            # so they cannot poison the stable prefix hash.
             if role == "system":
-                # Additional system content that's not in template -> L1
-                if self._is_contextual(content_str):
-                    prompt.add_message(LayerType.CONTEXT, role, content, original_index=i)
+                if content_str:
+                    prompt.add_message(LayerType.SESSION, role, content, original_index=i)
                 continue
 
             if role in ("assistant", "tool"):

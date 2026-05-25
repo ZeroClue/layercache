@@ -9,15 +9,21 @@ Main FastAPI application that provides:
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
+import os
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 import litellm
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+from .adapters import detect_provider
 from .cache.embedder import get_embedder
 from .cache.semantic import SemanticCache
 from .canonicalizer import Canonicalizer
@@ -25,7 +31,7 @@ from .config import LayerCacheSettings
 from .enhancements import DynamicFewShotEnhancement, create_default_registry
 from .metrics.collector import MetricsCollector
 from .models import LayerCacheRequest
-from .pipeline import RequestPipeline
+from .pipeline import RequestPipeline, validate_model_name
 from .registry.prompt_registry import PromptRegistry
 from .stratifier import Stratifier
 
@@ -45,11 +51,34 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan: initialize and cleanup resources."""
     global _settings, _pipeline, _metrics, _semantic_cache, _prompt_registry, _stratifier
 
-    # Load configuration
-    _settings = LayerCacheSettings()
+    # Load configuration (merge YAML + env vars)
+    _settings = LayerCacheSettings.from_yaml("layercache.yaml")
+
+    # Apply configured log level
+    logging.getLogger("layercache").setLevel(
+        getattr(logging, _settings.proxy.log_level.upper(), logging.INFO)
+    )
 
     # Suppress LiteLLM's verbose logging
     litellm.suppress_debug_info = True
+
+    # Validate that configured provider API keys are set
+    missing_keys: list[str] = []
+    for provider_name, provider_cfg in [
+        ("anthropic", _settings.providers.anthropic),
+        ("openai", _settings.providers.openai),
+        ("gemini", _settings.providers.gemini),
+    ]:
+        if provider_cfg and provider_cfg.api_key_env:
+            if not os.environ.get(provider_cfg.api_key_env):
+                missing_keys.append(f"{provider_name}:{provider_cfg.api_key_env}")
+
+    if missing_keys:
+        logger.warning(
+            "Provider API key(s) not set in environment: %s. "
+            "Requests for these providers will fail with authentication errors.",
+            ", ".join(missing_keys),
+        )
 
     # Initialize metrics
     _metrics = MetricsCollector()
@@ -88,10 +117,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if (e := enhancement_registry.get(n))
     ]
     for enh_config in _settings.enhancements.registered:
-        if (
-            enh_config.name == "dynamic_few_shot"
-            and "dynamic_few_shot" not in registered_names
-        ):
+        if enh_config.name == "dynamic_few_shot" and "dynamic_few_shot" not in registered_names:
             few_shot = DynamicFewShotEnhancement(
                 examples_path=enh_config.config.get("vector_store"),
                 top_k=enh_config.config.get("top_k", 3),
@@ -103,7 +129,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
             enhancement_registry.register(few_shot)
 
-    # Build the pipeline
+    # Build the pipeline with timeout and retries from config
+    provider = (
+        _settings.providers.anthropic or _settings.providers.openai or _settings.providers.gemini
+    )
+    timeout = provider.timeout if provider else 120
+    max_retries = provider.max_retries if provider else 3
+
     _pipeline = RequestPipeline(
         stratifier=_stratifier,
         canonicalizer=canonicalizer,
@@ -111,6 +143,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         semantic_cache=_semantic_cache,
         prompt_registry=_prompt_registry,
         metrics=_metrics,
+        timeout=timeout,
+        max_retries=max_retries,
     )
 
     logger.info("LayerCache initialized successfully")
@@ -119,29 +153,79 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Cleanup
     if _semantic_cache:
         await _semantic_cache.close()
+    embedder = get_embedder()
+    embedder.shutdown()
     logger.info("LayerCache shutdown complete")
 
 
 app = FastAPI(
     title="LayerCache",
     description="Intelligent Prompt Enhancement & Token Caching Proxy",
-    version="1.0.0",
+    version="1.1.0",
     lifespan=lifespan,
 )
+
+# CORS — allow all origins (this is a proxy, not an origin-bound service)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# --- Request ID Middleware ---
+
+
+@app.middleware("http")
+async def add_request_id(request: Request, call_next: Any) -> Response:
+    """Inject a unique request ID for tracing."""
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    request.state.request_id = request_id
+    response: Response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
 
 
 # --- Auth Middleware ---
 
+
 async def _verify_proxy_key(authorization: str | None) -> None:
     """Verify the proxy API key if configured."""
     if _settings and _settings.proxy.proxy_api_key:
+        expected = f"Bearer {_settings.proxy.proxy_api_key}"
         if not authorization:
             raise HTTPException(status_code=401, detail="Proxy API key required")
-        if authorization != f"Bearer {_settings.proxy.proxy_api_key}":
+        if not hmac.compare_digest(authorization, expected):
             raise HTTPException(status_code=403, detail="Invalid proxy API key")
 
 
+def _resolve_provider_api_key(model: str) -> str:
+    """Look up the provider API key from environment variables.
+
+    In protected mode (proxy_api_key is set), the proxy does NOT forward
+    the client's Bearer token to the provider. Instead it reads the
+    provider key from its own environment.
+    """
+    provider = detect_provider(model)
+    provider_config = getattr(_settings.providers, provider, None) if _settings else None
+    if provider_config and provider_config.api_key_env:
+        key = os.environ.get(provider_config.api_key_env)
+        if key:
+            return key
+        logger.warning(
+            "Provider %s API key (%s) is not set in environment",
+            provider,
+            provider_config.api_key_env,
+        )
+    else:
+        logger.warning("No provider config found for %s (model=%s)", provider, model)
+    return ""
+
+
 # --- OpenAI-Compatible Endpoints ---
+
 
 @app.post("/v1/chat/completions")
 async def chat_completions(
@@ -155,27 +239,52 @@ async def chat_completions(
     """
     await _verify_proxy_key(authorization)
 
+    # Reject oversized request bodies early (SSRF + OOM guard)
+    body_size = len(await request.body())
+    if body_size > 10 * 1024 * 1024:  # 10 MB
+        raise HTTPException(status_code=413, detail="Request body too large")
+
     # Parse request body
     try:
         body = await request.json()
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON body: {e}")
 
-    # Extract provider API key from Authorization header
-    # The proxy forwards this to the LLM provider
-    api_key = ""
-    if authorization and authorization.startswith("Bearer "):
-        api_key = authorization[7:]
+    # Extract model before building the request (needed for auth resolution + validation)
+    model = body.get("model", "")
 
-    # Also check for x-api-key header
-    x_api_key = request.headers.get("x-api-key")
-    if x_api_key and not api_key:
-        api_key = x_api_key
+    # Validate model name early (prevents SSRF, returns 400 not 500)
+    try:
+        validate_model_name(model)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Resolve the provider API key
+    if _settings and _settings.proxy.proxy_api_key:
+        # Protected mode: proxy auth is separate from the provider key.
+        # The proxy reads its own configured provider keys from the environment.
+        api_key = _resolve_provider_api_key(model)
+    else:
+        # Passthrough mode: the Bearer token / x-api-key IS the provider key.
+        api_key = ""
+        if authorization and authorization.startswith("Bearer "):
+            api_key = authorization[7:]
+        if not api_key:
+            api_key = request.headers.get("x-api-key", "")
+
+    # Reject empty API keys with a clear 401
+    if not api_key:
+        raise HTTPException(
+            status_code=401,
+            detail="No API key provided. "
+            "In passthrough mode, send a Bearer token or X-API-Key header. "
+            "In protected mode, configure the provider API key environment variable.",
+        )
 
     # Build LayerCache request from the body
     try:
         lc_request = LayerCacheRequest(
-            model=body.get("model", ""),
+            model=model,
             messages=body.get("messages", []),
             temperature=body.get("temperature"),
             top_p=body.get("top_p"),
@@ -207,15 +316,19 @@ async def chat_completions(
 
 async def _handle_streaming(lc_request: LayerCacheRequest, api_key: str) -> AsyncIterator[str]:
     """Handle a streaming request."""
-    async for chunk in _pipeline.process_streaming_request(lc_request, api_key):
-        # Format as Server-Sent Events
-        if isinstance(chunk, dict):
-            data = json.dumps(chunk, ensure_ascii=False)
-            yield f"data: {data}\n\n"
-        elif isinstance(chunk, str):
-            yield f"data: {json.dumps({'choices': [{'delta': {'content': chunk}}]})}\n\n"
-
-    yield "data: [DONE]\n\n"
+    try:
+        async for chunk in _pipeline.process_streaming_request(lc_request, api_key):
+            if isinstance(chunk, dict):
+                data = json.dumps(chunk, ensure_ascii=False)
+                yield f"data: {data}\n\n"
+            elif isinstance(chunk, str):
+                yield f"data: {json.dumps({'choices': [{'delta': {'content': chunk}}]})}\n\n"
+    except Exception:
+        logger.exception("Streaming pipeline failed")
+        error_body = json.dumps({"error": {"message": "Streaming error", "type": "stream_error"}})
+        yield f"data: {error_body}\n\n"
+    finally:
+        yield "data: [DONE]\n\n"
 
 
 @app.get("/v1/models")
@@ -234,6 +347,7 @@ async def list_models(
 
 # --- Cache Metrics Endpoints ---
 
+
 @app.get("/v1/cache/metrics")
 async def cache_metrics(
     authorization: str | None = Header(None),
@@ -249,19 +363,21 @@ async def cache_metrics(
 @app.get("/metrics")
 async def prometheus_metrics(
     authorization: str | None = Header(None),
-) -> JSONResponse:
+) -> Response:
     """Return Prometheus-compatible metrics."""
+    await _verify_proxy_key(authorization)
     if _metrics is None:
-        return JSONResponse(
+        return Response(
             content="# LayerCache metrics not initialized\n",
             media_type="text/plain",
         )
 
     metrics_text = _metrics.get_prometheus_metrics()
-    return JSONResponse(content=metrics_text, media_type="text/plain")
+    return Response(content=metrics_text, media_type="text/plain")
 
 
 # --- Prompt Registry Management ---
+
 
 @app.get("/v1/prompts/templates")
 async def list_prompt_templates(
@@ -332,12 +448,13 @@ async def reload_prompt_templates(
 
 # --- Health Check ---
 
+
 @app.get("/health")
 async def health_check() -> JSONResponse:
     """Health check endpoint."""
     status = {
         "status": "healthy",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "semantic_cache": _semantic_cache is not None,
     }
 
@@ -353,11 +470,19 @@ async def health_check() -> JSONResponse:
 
 # --- Error Handlers ---
 
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Global exception handler for unhandled errors."""
-    logger.error("Unhandled exception: %s", exc, exc_info=True)
+    request_id = getattr(request.state, "request_id", "unknown")
+    logger.error("Unhandled exception (request_id=%s): %s", request_id, exc, exc_info=True)
     return JSONResponse(
         status_code=500,
-        content={"error": {"message": "Internal server error", "type": "server_error"}},
+        content={
+            "error": {
+                "message": "Internal server error",
+                "type": "server_error",
+                "request_id": request_id,
+            }
+        },
     )

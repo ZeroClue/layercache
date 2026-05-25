@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
+
+logger = logging.getLogger(__name__)
 
 
 class ProxyConfig(BaseModel):
@@ -81,6 +84,7 @@ class LayerCacheSettings(BaseSettings):
         """Load configuration from a YAML file."""
         config_path = Path(path)
         if not config_path.exists():
+            logger.warning("Config file %s not found, using defaults", path)
             return cls()
 
         with open(config_path, encoding="utf-8") as f:

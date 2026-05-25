@@ -38,13 +38,15 @@ class AnthropicAdapter(BaseAdapter):
         marked_messages: list[dict[str, Any]] = []
 
         stable_layers = {LayerType.SYSTEM, LayerType.CONTEXT, LayerType.SESSION}
-        last_stable_indices: set[int] = set()
+        last_index_per_layer: dict[LayerType, int] = {}
 
         # Find the last message index for each stable layer
         for i, msg in enumerate(messages):
             layer = msg.get("_layer", LayerType.USER)
             if layer in stable_layers:
-                last_stable_indices.add(i)
+                last_index_per_layer[layer] = i
+
+        boundary_indices = set(last_index_per_layer.values())
 
         for i, msg in enumerate(messages):
             layer = msg.get("_layer", LayerType.USER)
@@ -56,7 +58,7 @@ class AnthropicAdapter(BaseAdapter):
             }
 
             # Inject cache_control at the end of each stable layer block
-            if i in last_stable_indices:
+            if i in boundary_indices:
                 if isinstance(msg_dict["content"], list):
                     # Multimodal content: add cache_control to the last block
                     msg_dict["content"][-1]["cache_control"] = {"type": "ephemeral"}
