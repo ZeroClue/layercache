@@ -74,29 +74,33 @@ Cache breakpoints are placed at L0/L1/L2 boundaries. Enhancements are injected a
 
 ## Features
 
-### Phase 1: Cache Optimizer & Routing (MVP)
-- **Prompt Canonicalizer** — Automatic whitespace normalization, JSON minification, tool sorting
-- **Provider Cache Marker Injection** — Anthropic ephemeral markers, OpenAI prefix alignment, Gemini CachedContent
-- **Universal Routing** — LiteLLM-based multi-provider routing with automatic failover
-- **Cache Observability** — Prometheus metrics, JSON dashboard, and built-in web dashboard (Jinja2 + HTMX + Chart.js)
-- **Persistent Metrics** — Time-series metric snapshots in SQLite with background collection loop
-- **Web Dashboard** — Overview charts, per-model breakdown, cache browser, config editor with hot-reload, live log viewer
-- **Config Hot-Reload** — Update log level, pipeline timeout/retries at runtime without restart
+### Cache Optimization
+- **Prompt Canonicalizer** — Whitespace normalization, JSON minification, tool sorting for byte-for-byte deterministic output
+- **Layered Architecture (L0-L4)** — Separates system, context, session, enhancement, and user content so enhancements never invalidate the cached prefix
+- **Provider Cache Markers** — Anthropic `cache_control`, OpenAI auto-prefix caching, Gemini `CachedContent`
+- **Injection at Stable Layers** — Markers placed at L0/L1/L2 boundaries; L3/L4 left uncached
 
-### Phase 2: Cache-Safe Enhancements
+### Session Management
+- **L2 Session Truncation** — Automatically drops old conversation turns to keep the cacheable prefix within a token budget (turn-group-aware, preserves tool-call clusters)
+- **Prefix Threshold Diagnostics** — Info-level warning when L0+L1+L2 is below the ~1024-token caching threshold
+
+### Semantic Cache
+- **Local Embeddings** — FastEmbed (BAAI/bge-small-en-v1.5) in ProcessPoolExecutor
+- **Dual-Key Strategy** — Prefix hash (exact) + query embedding (semantic similarity)
+- **Configurable TTLs** — Per-request and default TTLs with automatic cleanup
+
+### Prompt Enhancements
 - **Enhancement API** — Composable prompt engineering via request metadata
 - **Suffix Injection** — Enhancements injected at L3, never breaking L0-L2 cache
 - **Dynamic Few-Shot Selector** — Embedding-based retrieval of relevant examples
 - **Prompt Registry** — Named, versioned prompt templates (YAML/JSON)
 
-### Phase 3: Semantic Cache
-- **Local Embeddings** — FastEmbed (BAAI/bge-small-en-v1.5) in ProcessPoolExecutor
-- **Dual-Key Strategy** — Prefix hash (exact) + query embedding (semantic similarity)
-- **Configurable TTLs** — Per-request and default TTLs with automatic cleanup
-
-### Phase 4: Production Polish
-- **L2 Session Truncation** — Automatically drops old conversation turns to keep the cacheable prefix within a token budget
-- **Prefix Threshold Diagnostics** — Info-level warning when L0+L1+L2 is below the ~1024-token caching threshold
+### Observability & Management
+- **Prometheus + JSON Metrics** — Token savings, cost reduction, cache hit rates
+- **Web Dashboard** — Overview charts, per-model breakdown, cache browser, config editor, live log viewer (Jinja2 + HTMX + Chart.js)
+- **Persistent Time-Series** — Metric snapshots in SQLite with background collection loop
+- **Config Hot-Reload** — Update log level, pipeline timeout/retries at runtime without restart
+- **Universal Routing** — LiteLLM-based multi-provider routing with automatic failover
 
 ## Quick Start
 
