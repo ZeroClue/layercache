@@ -50,7 +50,7 @@ class SemanticCacheConfig(BaseModel):
     """Semantic cache configuration."""
 
     enabled: bool = Field(default=True, description="Enable the semantic cache (embedding-based query matching)")
-    backend: str = Field(default="sqlite", description="Cache backend (currently only sqlite)")
+    backend: str = Field(default="sqlite", pattern="^(sqlite|redis)$", description="Cache backend (currently only sqlite)")
     db_path: str = Field(default="/data/semantic_cache.db", description="Path to the SQLite database file")
     default_ttl: int = Field(default=300, ge=0, description="Default TTL in seconds for cache entries (0 = no expiry)")
     similarity_threshold: float = Field(default=0.95, ge=0.0, le=1.0, description="Minimum cosine similarity score for a semantic cache hit")

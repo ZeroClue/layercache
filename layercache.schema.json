@@ -310,6 +310,7 @@
         "backend": {
           "default": "sqlite",
           "description": "Cache backend (currently only sqlite)",
+          "pattern": "^(sqlite|redis)$",
           "title": "Backend",
           "type": "string"
         },
