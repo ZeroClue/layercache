@@ -475,6 +475,7 @@ layercache/
 │   ├── stratifier.py             # L0-L4 message classification
 │   ├── canonicalizer.py          # Prompt normalization
 │   ├── config.py                 # YAML configuration
+│   ├── schema.py                 # JSON Schema generator for IDE autocompletion
 │   ├── adapters/                 # Provider cache marker injection
 │   │   ├── anthropic.py         # Anthropic cache_control
 │   │   ├── anthropic_messages.py # /v1/messages wire-format shim
@@ -498,7 +499,7 @@ layercache/
 │   ├── static/                   # Dashboard assets
 │   └── registry/                 # Prompt template management
 │       └── prompt_registry.py    # YAML/JSON template loader
-├── tests/                        # Test suite (115 tests)
+├── tests/                        # Test suite (117 tests)
 ├── data/                         # Sample data
 │   ├── prompts/                  # Prompt templates
 │   └── few_shots/                # Few-shot examples

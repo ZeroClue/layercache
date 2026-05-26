@@ -24,6 +24,20 @@ LayerCache incorporates code from the following open-source projects. This inclu
 
 ---
 
+## CDN Dependencies
+
+These libraries are loaded at runtime from a CDN (esm.sh / jsDelivr) and are not vendored in the repository.
+
+### CodeMirror 6
+
+- **Source**: https://codemirror.net/
+- **Components**: `codemirror@6.0.1`, `@codemirror/lang-yaml@6.1.0`, `@codemirror/theme-one-dark@6.1.2`
+- **License**: MIT
+- **Copyright**: Copyright (C) 2018-2024 by Marijn Haverbeke and the CodeMirror authors
+- **Loaded by**: `layercache/static/config-editor.js`
+
+---
+
 ## Runtime Dependencies (pip)
 
 These packages are installed via `pip` at build time and bundled into the Docker image. Their licenses are reproduced below in abbreviated form.
