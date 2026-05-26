@@ -4,6 +4,7 @@
       "description": "Anthropic-specific provider configuration.",
       "properties": {
         "api_key_env": {
+          "description": "Environment variable name that holds the API key",
           "title": "Api Key Env",
           "type": "string"
         },
@@ -17,6 +18,7 @@
             }
           ],
           "default": null,
+          "description": "Override the default API base URL for this provider",
           "title": "Base Url"
         },
         "default_model": {
@@ -29,20 +31,27 @@
             }
           ],
           "default": null,
+          "description": "Default model to use when the request omits the model field",
           "title": "Default Model"
         },
         "max_retries": {
           "default": 3,
+          "description": "Maximum number of retries on transient failures",
+          "maximum": 10,
+          "minimum": 0,
           "title": "Max Retries",
           "type": "integer"
         },
         "timeout": {
           "default": 120,
+          "description": "Request timeout in seconds",
+          "minimum": 1,
           "title": "Timeout",
           "type": "integer"
         },
         "use_auto_cache_control": {
           "default": false,
+          "description": "[P1 deferred] Automatically inject cache_control markers on system and historical messages",
           "title": "Use Auto Cache Control",
           "type": "boolean"
         }
@@ -57,10 +66,12 @@
       "description": "Caching configuration.",
       "properties": {
         "semantic": {
-          "$ref": "#/$defs/SemanticCacheConfig"
+          "$ref": "#/$defs/SemanticCacheConfig",
+          "description": "Semantic cache settings"
         },
         "metrics": {
-          "$ref": "#/$defs/MetricsConfig"
+          "$ref": "#/$defs/MetricsConfig",
+          "description": "Metrics snapshot storage settings"
         },
         "max_session_tokens": {
           "anyOf": [
@@ -72,6 +83,7 @@
             }
           ],
           "default": null,
+          "description": "Optional: truncate L2 to fit within this token budget (null = no truncation)",
           "title": "Max Session Tokens"
         }
       },
@@ -82,15 +94,18 @@
       "description": "Single enhancement plugin configuration.",
       "properties": {
         "name": {
+          "description": "Unique name used to reference this enhancement in requests (lc_enhancements)",
           "title": "Name",
           "type": "string"
         },
         "class_path": {
+          "description": "Python dotted path to the enhancement class, e.g. layercache.enhancements.chain_of_thought.ChainOfThoughtEnhancement",
           "title": "Class Path",
           "type": "string"
         },
         "config": {
           "additionalProperties": true,
+          "description": "Arbitrary keyword arguments passed to the enhancement constructor",
           "title": "Config",
           "type": "object"
         }
@@ -106,6 +121,7 @@
       "description": "Enhancements configuration.",
       "properties": {
         "registered": {
+          "description": "List of registered enhancement plugins",
           "items": {
             "$ref": "#/$defs/EnhancementConfig"
           },
@@ -121,17 +137,20 @@
       "properties": {
         "db_path": {
           "default": "/data/metrics.db",
+          "description": "Path to the metrics SQLite database",
           "title": "Db Path",
           "type": "string"
         },
         "snapshot_interval_seconds": {
           "default": 60,
+          "description": "Seconds between background metric snapshots",
           "exclusiveMinimum": 0,
           "title": "Snapshot Interval Seconds",
           "type": "integer"
         },
         "snapshot_retention_days": {
           "default": 7,
+          "description": "Days to retain metric snapshots before pruning",
           "exclusiveMinimum": 0,
           "title": "Snapshot Retention Days",
           "type": "integer"
@@ -144,6 +163,7 @@
       "description": "Single LLM provider configuration.",
       "properties": {
         "api_key_env": {
+          "description": "Environment variable name that holds the API key",
           "title": "Api Key Env",
           "type": "string"
         },
@@ -157,6 +177,7 @@
             }
           ],
           "default": null,
+          "description": "Override the default API base URL for this provider",
           "title": "Base Url"
         },
         "default_model": {
@@ -169,15 +190,21 @@
             }
           ],
           "default": null,
+          "description": "Default model to use when the request omits the model field",
           "title": "Default Model"
         },
         "max_retries": {
           "default": 3,
+          "description": "Maximum number of retries on transient failures",
+          "maximum": 10,
+          "minimum": 0,
           "title": "Max Retries",
           "type": "integer"
         },
         "timeout": {
           "default": 120,
+          "description": "Request timeout in seconds",
+          "minimum": 1,
           "title": "Timeout",
           "type": "integer"
         }
@@ -200,7 +227,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "Anthropic provider settings"
         },
         "openai": {
           "anyOf": [
@@ -211,7 +239,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "OpenAI provider settings"
         },
         "gemini": {
           "anyOf": [
@@ -222,7 +251,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "Google Gemini provider settings"
         }
       },
       "title": "ProvidersConfig",
@@ -233,11 +263,15 @@
       "properties": {
         "host": {
           "default": "0.0.0.0",
+          "description": "Bind address for the HTTP server",
           "title": "Host",
           "type": "string"
         },
         "port": {
           "default": 8000,
+          "description": "Port for the HTTP server",
+          "maximum": 65535,
+          "minimum": 1,
           "title": "Port",
           "type": "integer"
         },
@@ -251,10 +285,12 @@
             }
           ],
           "default": null,
+          "description": "Optional bearer token to authenticate proxy clients",
           "title": "Proxy Api Key"
         },
         "log_level": {
           "default": "info",
+          "description": "Log level (debug, info, warning, error)",
           "title": "Log Level",
           "type": "string"
         }
@@ -267,31 +303,40 @@
       "properties": {
         "enabled": {
           "default": true,
+          "description": "Enable the semantic cache (embedding-based query matching)",
           "title": "Enabled",
           "type": "boolean"
         },
         "backend": {
           "default": "sqlite",
+          "description": "Cache backend (currently only sqlite)",
           "title": "Backend",
           "type": "string"
         },
         "db_path": {
           "default": "/data/semantic_cache.db",
+          "description": "Path to the SQLite database file",
           "title": "Db Path",
           "type": "string"
         },
         "default_ttl": {
           "default": 300,
+          "description": "Default TTL in seconds for cache entries (0 = no expiry)",
+          "minimum": 0,
           "title": "Default Ttl",
           "type": "integer"
         },
         "similarity_threshold": {
           "default": 0.95,
+          "description": "Minimum cosine similarity score for a semantic cache hit",
+          "maximum": 1.0,
+          "minimum": 0.0,
           "title": "Similarity Threshold",
           "type": "number"
         },
         "embedder": {
           "default": "BAAI/bge-small-en-v1.5",
+          "description": "FastEmbed model name for generating query embeddings",
           "title": "Embedder",
           "type": "string"
         }
@@ -304,16 +349,20 @@
   "description": "Configuration schema for layercache.yaml",
   "properties": {
     "proxy": {
-      "$ref": "#/$defs/ProxyConfig"
+      "$ref": "#/$defs/ProxyConfig",
+      "description": "Proxy server settings"
     },
     "providers": {
-      "$ref": "#/$defs/ProvidersConfig"
+      "$ref": "#/$defs/ProvidersConfig",
+      "description": "LLM provider settings"
     },
     "caching": {
-      "$ref": "#/$defs/CachingConfig"
+      "$ref": "#/$defs/CachingConfig",
+      "description": "Caching behaviour"
     },
     "enhancements": {
-      "$ref": "#/$defs/EnhancementsConfig"
+      "$ref": "#/$defs/EnhancementsConfig",
+      "description": "Prompt enhancement plugins"
     }
   },
   "title": "LayerCache Configuration",
