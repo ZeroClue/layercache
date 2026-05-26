@@ -1,114 +1,168 @@
-# Built-in Web Dashboard — Plan v2
+# Built-in Web Dashboard — Plan
 
-## Data storage: the key gap
+## Data storage
 
-Current metrics are purely in-memory (`MetricsCollector`). They reset to zero on every restart. A dashboard with time-series charts ("last 24h", "last 7 days") needs persistent storage.
+Current metrics are purely in-memory (`MetricsCollector`). They reset to zero on every restart. A dashboard with time-series charts needs persistent storage.
 
-### Option A: SQLite snapshots (recommended)
+### SQLite metric store (separate DB)
 
-- SQLite is already a dependency (aiosqlite for semantic cache)
-- No new infra, works identically in Docker and bare-metal
-- Background asyncio task snapshots current metrics every 60s
-- API endpoint returns time-bucketed data for charting
-- Auto-prune data older than configurable retention (default 7 days)
+Use a dedicated `/data/metrics.db` (not the same DB as the semantic cache) to avoid write contention and keep concerns separated.
 
-**New table in the existing SQLite DB:**
 ```sql
 CREATE TABLE metric_snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts INTEGER NOT NULL,              -- unix epoch seconds
-    name TEXT NOT NULL,                -- metric name
+    ts INTEGER NOT NULL,
+    name TEXT NOT NULL,
     value REAL NOT NULL,
-    labels TEXT DEFAULT '{}',          -- JSON, e.g. {"model": "claude-..."}
+    labels TEXT DEFAULT '{}',          -- JSON, e.g. {"model": "anthropic/..."}
     UNIQUE(ts, name, labels)
 );
-
-CREATE INDEX idx_snapshots_ts ON metric_snapshots(ts);
 ```
 
-**Snapshot schema** (one row per counter + current running values):
-| Metric | Example |
-|--------|---------|
-| `llm_requests_total` | 1250 |
-| `semantic_cache_hits_total` | 180 |
-| `semantic_cache_misses_total` | 1070 |
-| `tokens_input_total` | 1250000 |
-| `tokens_output_total` | 625000 |
-| `tokens_cache_read_total` | 815000 |
-| `cost_saved_usd` | 21.72 |
-| `latency_avg_seconds` | 1.234 |
-| `latency_p95_seconds` | 3.456 |
-| `cache_hit_rate` | 0.65 |
+WAL journal mode enabled for concurrent reads while the background writer writes.
 
-Per-model snapshots use the `labels` column: `{"model": "anthropic/claude-3-5-sonnet-20241022"}`.
+### Background snapshot task
 
-**New API endpoints:**
-- `GET /v1/cache/metrics/history?range=24h&resolution=5m` — returns bucketed time-series
+- Runs every 60s (on the minute boundary, not pure sleep drift)
+- Reads current counters from `MetricsCollector`
+- Writes one row per metric + per-model breakdown into `metric_snapshots`
+- Task is wrapped in try/except with log + retry; never silently dies
+- Tracks `last_snapshot_ts` exposed via a lightweight `/v1/cache/metrics/status` endpoint so the dashboard can show "data age" warnings
+- Prunes rows older than `snapshot_retention_days` (default 7) on each snapshot cycle
 
-**Background task:**
-- `asyncio.create_task` during lifespan, coroutine sleeps 60s between snapshots
-- Uses existing `MetricsCollector.get_metrics()` for the snapshot values
-- Prunes rows older than `snapshot_retention_days` (configurable, default 7)
+Snapshot stores **running counters** (`llm_requests_total: 1250`), not deltas.
+The history endpoint computes rates as `(v2 - v1) / (t2 - t1)` for charting.
+First snapshot after restart is discarded as a baseline anchor.
 
-### Option B: Prometheus-only
+### Bucketing semantics
 
-Skip the SQLite snapshots. The built-in dashboard queries Prometheus directly via its HTTP API. This requires Prometheus to be running (no bare-metal dashboard) but gives you real PromQL power.
+`GET /v1/cache/metrics/history?range=24h&resolution=5m`
 
-**Decision**: Go with Option A (SQLite) as the default. Option B is complementary — the Grafana sidecar already handles the Prometheus path. SQLite makes the dashboard work for everyone.
+- Each series: `SELECT ts, AVG(value) WHERE name=? AND labels=? GROUP BY floor(ts/?)*?`
+- Gaps → null (Chart.js renders nulls as line breaks; caller can interpolate)
+- No snapshot in bucket → null, not zero (zero would falsely show "0 requests")
+- Counter series: first point after restart is discarded (no previous value to diff against)
 
 ---
 
-## Implementation order (updated)
+## Architecture
 
-### Phase 1: Storage backend (~4h)
+### Stack
 
-1. Add `metric_snapshots` table to semantic cache DB initialization
-2. Add `_snapshot_metrics()` background task to lifespan
-3. Add `GET /v1/cache/metrics/history` endpoint with time bucketing
-4. Add `snapshot_retention_days` to config
+- **Server**: Jinja2 templates rendered by FastAPI
+- **Frontend**: HTMX (CDN + vendored fallback) + Chart.js (CDN + vendored fallback)
+- **Auth**: Dashboard requires proxy API key via login form → session cookie. Read-only view for Viewer role, admin for Config editing.
+- **Static files**: FastAPI `StaticFiles` mount at `/static`
 
-### Phase 2: Dashboard UI (~12h)
+### Auth model
 
-5. **Router + base template** — sidebar nav, auth wrapper, page skeleton
-6. **Overview page** — stat cards + Chart.js time-series (reads from history endpoint)
-7. **Models page** — table from `/v1/models`
-8. **Templates page** — CRUD forms wrapping existing API
-9. **Cache page** — stats + search/invalidate from semantic cache API
-10. **Config page** — read-only YAML display with secrets masked
-11. **Logs page** — ring buffer tail (requires new backend stream)
+| Page | Access |
+|------|--------|
+| Overview, Models, Cache stats | Any authenticated user |
+| Template CRUD, Config view | Admin only (proxy_api_key configured) |
+| Log stream | Any authenticated user |
 
-### Phase 3: Config editing (future)
+No `proxy_api_key` configured → dashboard is unrestricted (local-only by default).
 
-12. Write-back support for `layercache.yaml` — mutation endpoint + validation
-13. Apply config changes without full restart (signal-based reload)
+### Config editing read-only detection
+
+In Docker the config file is mounted `:ro`. The config page detects writability at startup and shows a banner: *"Config file is read-only. Edit layercache.yaml directly and reload."* The save button is hidden.
 
 ---
 
-## Files to create/modify
+## Pages
+
+### 1. Overview (`/dashboard`)
+
+| Widget | Source |
+|--------|--------|
+| Request rate (5m avg) | `history?range=1h&resolution=1m` |
+| Semantic cache hit rate % | `hits / (hits + misses)` |
+| Tokens saved (cumulative) | latest snapshot value |
+| Cost saved (USD) | latest snapshot value |
+| Provider cache hit rate | latest snapshot value |
+| Avg / P95 latency | latest + 24h trend |
+| Data age warning | shown if `last_snapshot_ts > 90s` ago |
+
+Charts: 24h line chart for request rate, cache hit rate, token usage — all from history endpoint.
+
+### 2. Models (`/dashboard/models`)
+
+Table from `/v1/models`: provider name, model count, API key configured (yes/no), click to expand per-provider model list.
+
+### 3. Cache (`/dashboard/cache`)
+
+Semantic cache stats, search by prefix hash, invalidate entry.
+
+### 4. Templates (`/dashboard/templates`)
+
+Prompt template CRUD wrapping `/v1/prompts/templates` API. Create/edit via form, delete with confirmation, reload from disk button.
+
+### 5. Configuration (`/dashboard/config`)
+
+Read-only view of current `layercache.yaml` (secrets masked). Banner if file is read-only. Phase 3 will add inline editing with atomic write + mtime conflict check.
+
+### 6. Logs (`/dashboard/logs`)
+
+Tail of recent log entries from a ring buffer.
+
+---
+
+## Files to create
 
 ```
 layercache/
   metrics/
-    collector.py       # + snapshot_to_db(), get_history()
-    storage.py         # NEW: metric_snapshots table CRUD
+    collector.py        # + snapshot_to_db() method
+    storage.py          # NEW: metric_snapshots table init, insert, query, prune
   dashboard/
-    __init__.py
-    router.py
+    __init__.py          # router registration
+    router.py            # all /dashboard routes (HTML)
     templates/
-      base.html
-      overview.html
-      models.html
-      cache.html
-      templates.html
-      config.html
-      logs.html
-  config.py            # + snapshot_retention_days field
-  main.py              # + lifespan background task, /history route
+      base.html          # layout with sidebar nav + auth
+      overview.html      # stat cards + Chart.js time-series
+      models.html        # provider/model table
+      cache.html         # cache stats + invalidation
+      templates.html     # prompt template CRUD
+      config.html        # config viewer with R/O detection
+      logs.html          # log tail
   static/
+    vendor/
+      htmx.min.js        # vendored fallback
+      chart.umd.min.js   # vendored fallback
     dashboard.css
     dashboard.js
+  config.py              # + snapshot_retention_days, snapshot_interval_seconds
+  main.py                # + StaticFiles mount, /history route, lifespan snapshot task
 ```
+
+## Implementation order
+
+### Phase 1: Storage backend (~5h)
+
+1. Create `/data/metrics.db` with WAL mode, `metric_snapshots` table
+2. `storage.py` — init, insert_snapshot(), query_history(), prune()
+3. Background `_snapshot_metrics()` task in lifespan with error handling
+4. `GET /v1/cache/metrics/history` endpoint with bucketed queries
+5. `GET /v1/cache/metrics/status` for snapshot age tracking
+6. Config: `snapshot_retention_days`, `snapshot_interval_seconds`
+
+### Phase 2: Dashboard UI (~14h)
+
+7. StaticFiles mount + base template with sidebar nav + login
+8. Overview page: stat cards + Chart.js charts from history endpoint
+9. Models page: table from `/v1/models`
+10. Templates page: CRUD forms
+11. Cache page: stats + search/invalidate
+12. Config page: YAML display with R/O detection + secrets masking
+13. Logs page: ring buffer tail
+
+### Phase 3: Config editing (future)
+
+14. Write-back endpoint with atomic write + mtime check
+15. YAML validation before write
+16. SIGHUP reload or hot-reload watcher
 
 ## Dependencies
 
-No new Python packages — aiosqlite, Jinja2 already available. HTMX + Chart.js loaded from CDN in the HTML.
+No new Python packages. HTMX and Chart.js loaded from CDN with vendored fallbacks in `static/vendor/`.
