@@ -43,6 +43,7 @@ layercache/models.py         — StratifiedPrompt, LayerCacheRequest, CacheEntry
 layercache/stratifier.py     — L0-L4 classification (heuristic/template/hints)
 layercache/canonicalizer.py  — Whitespace, JSON, tool canonicalization
 layercache/config.py         — Pydantic settings from layercache.yaml
+layercache/schema.py         — JSON Schema generator for IDE autocompletion
 layercache/adapters/         — Anthropic/OpenAI/Gemini cache markers + /v1/messages shim
 layercache/enhancements/     — CoT, structured output, self-critique, dynamic few-shot
 layercache/cache/            — Embedder + SQLite semantic cache
@@ -65,3 +66,4 @@ layercache/dashboard/        — Web dashboard (Jinja2 + HTMX + Chart.js)
 - `MetricsCollector` uses a `threading.Lock` for concurrent access from request handlers and the snapshot loop
 - `max_session_tokens` in config: truncates L2 to fit within token budget (provider-agnostic); also hot-reloadable
 - Prefix threshold warning logged at INFO once per hour per prefix hash when L0+L1+L2 is below ~1024 tokens
+- `layercache.schema.json` must be regenerated after changing `config.py` fields: run `layercache-schema` from the project root

@@ -58,8 +58,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 - README.md: version badge 1.4.0, pipeline diagram, features table, config reference
-- AGENTS.md: 11-stage pipeline, gotchas for truncation and threshold warning
+- AGENTS.md: 11-stage pipeline, gotchas for truncation, threshold warning, schema regeneration
 - CHANGELOG.md: this entry
+- README.md: flattened features section (removed Phase labels), dashboard screenshots added
+- THIRD_PARTY_NOTICES.md: expanded from vendored JS to cover all pip dependencies
+- docs/ROADMAP.md: dropped Completed section (redundant with CHANGELOG), honest dependency notes, plugin marketplace → icebox, added cache invalidation API + config JSON Schema to V2 P2
+
+### Added
+- **Config JSON Schema** (`layercache/schema.py`, `layercache.schema.json`): generated from `LayerCacheSettings.model_json_schema()`, validates `layercache.yaml` at edit time. IDE autocompletion via `# yaml-language-server: $schema=` comment. CLI entry point `layercache-schema`.
+- **Field descriptions and constraints**: every Pydantic config field now has `description=` for IDE tooltips, `ge`/`le`/`gt` constraints on numeric fields, `pattern` on backend string. Catches bad ports, thresholds, TTLs at validation time.
+- Tests: `test_schema_generation`, `test_yaml_has_schema_reference`
+
+### Fixed
+- **MetricsDB row_factory**: missing `row_factory = aiosqlite.Row` caused `snapshot_age()` to crash with `tuple indices must be integers, not str`
+- **Jinja format filter**: `{:,}` used `str.format()` syntax but Jinja2's `|format` uses `%`-style. Replaced with `%.0f` on the tokens-saved stat card
 
 ## [1.2.0] - 2026-05-26
 
