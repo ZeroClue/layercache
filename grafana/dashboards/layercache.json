@@ -1,0 +1,166 @@
+{
+  "title": "LayerCache Dashboard",
+  "uid": "layercache",
+  "version": 1,
+  "timezone": "browser",
+  "panels": [
+    {
+      "title": "LLM Requests",
+      "type": "stat",
+      "gridPos": {"x": 0, "y": 0, "w": 4, "h": 4},
+      "targets": [
+        {"expr": "rate(lc_llm_requests_total[5m])", "legendFormat": "req/s"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "color": {"mode": "palette-classic"},
+          "thresholds": {"mode": "absolute", "steps": [{"value": null, "color": "green"}]}
+        }
+      }
+    },
+    {
+      "title": "Semantic Cache Hit Rate",
+      "type": "stat",
+      "gridPos": {"x": 4, "y": 0, "w": 4, "h": 4},
+      "targets": [
+        {
+          "expr": "rate(lc_semantic_cache_hits_total[5m]) / (rate(lc_semantic_cache_hits_total[5m]) + rate(lc_semantic_cache_misses_total[5m]))",
+          "legendFormat": "hit rate"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [
+            {"value": null, "color": "red"},
+            {"value": 0.1, "color": "yellow"},
+            {"value": 0.3, "color": "green"}
+          ]}
+        }
+      }
+    },
+    {
+      "title": "Tokens Saved (est.)",
+      "type": "stat",
+      "gridPos": {"x": 8, "y": 0, "w": 4, "h": 4},
+      "targets": [
+        {"expr": "lc_tokens_saved_total", "legendFormat": "tokens"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {"mode": "palette-classic"}
+        }
+      }
+    },
+    {
+      "title": "Cost Saved (USD)",
+      "type": "stat",
+      "gridPos": {"x": 12, "y": 0, "w": 4, "h": 4},
+      "targets": [
+        {"expr": "lc_cost_saved_usd", "legendFormat": "USD"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "color": {"mode": "palette-classic"}
+        }
+      }
+    },
+    {
+      "title": "Provider Cache Tokens",
+      "type": "stat",
+      "gridPos": {"x": 16, "y": 0, "w": 4, "h": 4},
+      "targets": [
+        {"expr": "lc_cache_read_tokens_total", "legendFormat": "cached"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {"mode": "palette-classic"}
+        }
+      }
+    },
+    {
+      "title": "Request Duration (P95)",
+      "type": "stat",
+      "gridPos": {"x": 20, "y": 0, "w": 4, "h": 4},
+      "targets": [
+        {"expr": "lc_request_duration_seconds_p95", "legendFormat": "p95"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [
+            {"value": null, "color": "green"},
+            {"value": 5, "color": "yellow"},
+            {"value": 15, "color": "red"}
+          ]}
+        }
+      }
+    },
+    {
+      "title": "Request Rate (5m)",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 5, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "rate(lc_llm_requests_total[1m])", "legendFormat": "requests"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "color": {"mode": "palette-classic"}
+        }
+      }
+    },
+    {
+      "title": "Token Usage (5m avg)",
+      "type": "timeseries",
+      "gridPos": {"x": 12, "y": 5, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "rate(lc_input_tokens_total[1m])", "legendFormat": "input"},
+        {"expr": "rate(lc_output_tokens_total[1m])", "legendFormat": "output"},
+        {"expr": "rate(lc_cache_read_tokens_total[1m])", "legendFormat": "cache read"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {"mode": "palette-classic"}
+        }
+      }
+    },
+    {
+      "title": "Request Duration",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 14, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "lc_request_duration_seconds_avg", "legendFormat": "avg"},
+        {"expr": "lc_request_duration_seconds_p95", "legendFormat": "p95"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {"mode": "palette-classic"}
+        }
+      }
+    },
+    {
+      "title": "Semantic Cache Hits vs Misses",
+      "type": "timeseries",
+      "gridPos": {"x": 12, "y": 14, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "rate(lc_semantic_cache_hits_total[1m])", "legendFormat": "hits"},
+        {"expr": "rate(lc_semantic_cache_misses_total[1m])", "legendFormat": "misses"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"}
+        }
+      }
+    }
+  ],
+  "schemaVersion": 39
+}
