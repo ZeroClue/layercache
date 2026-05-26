@@ -14,11 +14,13 @@ Config file <code>{{ config_path }}</code> is read-only. Edit the file directly 
       hx-swap="innerHTML"
       {% if not writable %}style="display:none"{% endif %}>
   <input type="hidden" name="mtime" id="cfg-mtime" value="{{ mtime }}">
-  <textarea name="config_yaml" class="input config-editor" spellcheck="false">{{ config_raw }}</textarea>
+  <textarea id="config-editor" name="config_yaml" class="code-textarea config-editor" spellcheck="false">{{ config_raw }}</textarea>
+  <div id="editor-host"></div>
   <div class="form-actions">
-    <button type="submit" class="btn btn-primary">Save Config</button>
+    <button type="submit" class="btn btn-primary">Save Config <span class="spinner htmx-indicator"></span></button>
     <button type="button" class="btn" onclick="location.reload()">Discard Changes</button>
   </div>
 </form>
+<script type="module" src="/static/config-editor.js"></script>
 {% endblock %}
 {% block body_class %}dashboard-page{% endblock %}

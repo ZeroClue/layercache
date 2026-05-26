@@ -114,11 +114,7 @@ def reload_config() -> dict[str, Any]:
 
     # Update pipeline timeout/retries
     if _pipeline:
-        provider = (
-            _settings.providers.anthropic
-            or _settings.providers.openai
-            or _settings.providers.gemini
-        )
+        provider = _settings.providers.first()
         _pipeline._timeout = provider.timeout if provider else 120
         _pipeline._max_retries = provider.max_retries if provider else 3
         _pipeline._max_session_tokens = _settings.caching.max_session_tokens
@@ -162,12 +158,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Validate that configured provider API keys are set
     missing_keys: list[str] = []
-    for provider_name, provider_cfg in [
-        ("anthropic", _settings.providers.anthropic),
-        ("openai", _settings.providers.openai),
-        ("gemini", _settings.providers.gemini),
-    ]:
-        if provider_cfg and provider_cfg.api_key_env:
+    for provider_name, provider_cfg in _settings.providers.root.items():
+        if provider_cfg.api_key_env:
             if not os.environ.get(provider_cfg.api_key_env):
                 missing_keys.append(f"{provider_name}:{provider_cfg.api_key_env}")
 
@@ -230,9 +222,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             enhancement_registry.register(few_shot)
 
     # Build the pipeline with timeout and retries from config
-    provider = (
-        _settings.providers.anthropic or _settings.providers.openai or _settings.providers.gemini
-    )
+    provider = _settings.providers.first()
     timeout = provider.timeout if provider else 120
     max_retries = provider.max_retries if provider else 3
 
@@ -246,6 +236,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         timeout=timeout,
         max_retries=max_retries,
         max_session_tokens=_settings.caching.max_session_tokens,
+        providers_config=_settings.providers,
     )
 
     # Start background metrics snapshot task
@@ -400,8 +391,8 @@ def _resolve_provider_api_key(model: str) -> str:
     the client's Bearer token to the provider. Instead it reads the
     provider key from its own environment.
     """
-    provider = detect_provider(model)
-    provider_config = getattr(_settings.providers, provider, None) if _settings else None
+    provider = detect_provider(model, _settings.providers if _settings else None)
+    provider_config = _settings.providers.root.get(provider) if _settings else None
     if provider_config and provider_config.api_key_env:
         key = os.environ.get(provider_config.api_key_env)
         if key:
@@ -711,21 +702,16 @@ async def list_models(
         raise HTTPException(status_code=500, detail="Failed to list models")
 
 
-def _list_configured_providers() -> list[dict[str, str]]:
+def _list_configured_providers() -> list[dict[str, Any]]:
     """List providers that are configured in layercache.yaml."""
     if not _settings:
         return []
-    configured: list[dict[str, str]] = []
-    for name, cfg in [
-        ("anthropic", _settings.providers.anthropic),
-        ("openai", _settings.providers.openai),
-        ("gemini", _settings.providers.gemini),
-    ]:
-        if cfg:
-            key_set = bool(os.environ.get(cfg.api_key_env)) if cfg.api_key_env else False
-            configured.append(
-                {"name": name, "api_key_env": cfg.api_key_env or "", "key_set": key_set}
-            )
+    configured: list[dict[str, Any]] = []
+    for name, cfg in _settings.providers.root.items():
+        key_set = bool(os.environ.get(cfg.api_key_env)) if cfg.api_key_env else False
+        configured.append(
+            {"name": name, "api_key_env": cfg.api_key_env or "", "key_set": key_set}
+        )
     return configured
 
 

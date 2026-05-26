@@ -2,22 +2,22 @@
 {% block nav_models %}active{% endblock %}
 {% block page_title %}Models{% endblock %}
 {% block content %}
-<h2>Configured Providers</h2>
+<h2>Providers</h2>
 <table class="table">
   <thead>
-    <tr><th>Provider</th><th>API Key Env</th><th>Key Set</th><th>Models</th></tr>
+    <tr><th>Provider</th><th>Adapter</th><th>Key Set</th><th>Models</th></tr>
   </thead>
   <tbody>
-    {% for prov in configured_providers %}
+    {% for p in providers %}
     <tr>
-      <td>{{ prov.name }}</td>
-      <td><code>{{ prov.api_key_env }}</code></td>
-      <td>{% if prov.key_set %}<span class="badge badge-ok">Yes</span>{% else %}<span class="badge badge-error">No</span>{% endif %}</td>
+      <td><strong>{{ p.name }}</strong></td>
+      <td><code>{{ p.adapter }}</code>{% if p.adapter_note %} <span class="text-muted">({{ p.adapter_note }})</span>{% endif %}</td>
+      <td>{% if p.key_set is none %}<span class="badge badge-muted">—</span>{% elif p.key_set %}<span class="badge badge-ok">Yes</span>{% else %}<span class="badge badge-error">No</span>{% endif %}</td>
       <td>
         <details>
-          <summary>{{ by_provider[prov.name]|length }} models</summary>
+          <summary>{{ p.model_count }} models</summary>
           <ul class="model-list">
-            {% for m in by_provider[prov.name] %}
+            {% for m in p.models %}
             <li><code>{{ m }}</code></li>
             {% endfor %}
           </ul>
@@ -27,6 +27,16 @@
     {% endfor %}
   </tbody>
 </table>
-<p class="text-muted">Total known models: <strong>{{ total_models }}</strong> across {{ by_provider|length }} providers.</p>
+{% if show_all_link %}
+<p class="text-muted">
+  <a href="?all=1" hx-get="/dashboard/models?all=1" hx-select=".main-content" hx-target=".main-content" hx-swap="outerHTML" hx-push-url="true">Show all {{ total_providers }} providers <span class="spinner htmx-indicator"></span></a>
+  ({{ known_models }} total known models)
+</p>
+{% else %}
+<p class="text-muted">
+  <a href="/dashboard/models" hx-get="/dashboard/models" hx-select=".main-content" hx-target=".main-content" hx-swap="outerHTML" hx-push-url="true">Show configured only <span class="spinner htmx-indicator"></span></a>
+  ({{ known_models }} total known models across {{ total_providers }} providers)
+</p>
+{% endif %}
 {% endblock %}
 {% block body_class %}dashboard-page{% endblock %}

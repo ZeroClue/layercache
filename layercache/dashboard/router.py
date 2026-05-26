@@ -16,6 +16,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from .. import __version__
 from ..registry.prompt_registry import PromptTemplate
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,9 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+# Jinja2 globals available in all dashboard templates
+templates.env.globals["app_version"] = __version__
 
 # Serialize config saves to prevent races between concurrent POSTs
 _config_save_lock = asyncio.Lock()
@@ -138,34 +142,71 @@ async def models_page(request: Request) -> HTMLResponse | RedirectResponse:
         return _redirect_login()
 
     settings = getattr(request.app.state, "settings", None)
-    configured: list[dict[str, Any]] = []
-    if settings:
-        for name, cfg in [
-            ("anthropic", settings.providers.anthropic),
-            ("openai", settings.providers.openai),
-            ("gemini", settings.providers.gemini),
-        ]:
-            if cfg:
-                key_set = bool(os.environ.get(cfg.api_key_env)) if cfg.api_key_env else False
-                configured.append(
-                    {
-                        "name": name,
-                        "api_key_env": cfg.api_key_env or "",
-                        "key_set": key_set,
-                    }
-                )
 
+    # Build config lookup
+    configured_map: dict[str, dict[str, Any]] = {}
+    if settings:
+        for name, cfg in settings.providers.root.items():
+            key_set = bool(os.environ.get(cfg.api_key_env)) if cfg.api_key_env else False
+            configured_map[name] = {
+                "name": name,
+                "key_set": key_set,
+                "adapter": settings.providers.adapter_for(name),
+            }
+
+    # Build LiteLLM provider list
     by_provider: dict[str, list[str]] = {}
     for provider, models in litellm.models_by_provider.items():
         by_provider[provider] = sorted(models)
+
+    # Merge: configured providers first, then all LiteLLM providers
+    show_all = request.query_params.get("all") == "1"
+    seen = set()
+    providers: list[dict[str, Any]] = []
+
+    adapter_hints = {
+        "anthropic": "ephemeral cache_control",
+        "openai": "auto prefix",
+        "gemini": "CachedContent API",
+    }
+
+    for name in sorted(configured_map):
+        seen.add(name)
+        info = configured_map[name]
+        models = by_provider.get(name, [])
+        info["model_count"] = len(models)
+        info["models"] = models
+        info["adapter_note"] = adapter_hints.get(info["adapter"])
+        providers.append(info)
+
+    if show_all:
+        for name in sorted(by_provider):
+            if name in seen:
+                continue
+            seen.add(name)
+            adapter = "openai"
+            if name in ("anthropic", "claude"):
+                adapter = "anthropic"
+            elif name in ("gemini", "google"):
+                adapter = "gemini"
+            models = by_provider[name]
+            providers.append({
+                "name": name,
+                "adapter": adapter,
+                "adapter_note": adapter_hints.get(adapter, "auto prefix"),
+                "key_set": None,
+                "model_count": len(models),
+                "models": models,
+            })
 
     return templates.TemplateResponse(
         request=request,
         name="models.html",
         context={
-            "configured_providers": configured,
-            "by_provider": by_provider,
-            "total_models": len(litellm.model_list),
+            "providers": providers,
+            "show_all_link": show_all is False,
+            "total_providers": len(by_provider),
+            "known_models": len(litellm.model_list),
         },
     )
 

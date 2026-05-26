@@ -23,6 +23,7 @@ from typing import Any
 from .adapters import detect_provider, get_adapter
 from .cache.semantic import SemanticCache
 from .canonicalizer import Canonicalizer
+from .config import ProvidersConfig
 from .enhancements.base import EnhancementRegistry
 from .metrics.collector import MetricsCollector, RequestTimer
 from .models import LayerCacheRequest, LayerType, StratifiedMessage, StratifiedPrompt
@@ -76,6 +77,7 @@ class RequestPipeline:
         timeout: int = 120,
         max_retries: int = 3,
         max_session_tokens: int | None = None,
+        providers_config: ProvidersConfig | None = None,
     ) -> None:
         self.stratifier = stratifier
         self.canonicalizer = canonicalizer
@@ -86,6 +88,7 @@ class RequestPipeline:
         self._timeout = timeout
         self._max_retries = max_retries
         self._max_session_tokens = max_session_tokens
+        self._providers_config = providers_config
 
         # P2: throttled prefix-hash warning set
         self._prefix_warning_throttle: dict[str, float] = {}
@@ -299,8 +302,8 @@ class RequestPipeline:
             payload = self._build_payload(request, prompt, canonical_tools)
 
             # Stage 6: Provider Cache Marker Injection
-            provider = detect_provider(request.model)
-            adapter = get_adapter(provider)
+            provider = detect_provider(request.model, self._providers_config)
+            adapter = get_adapter(provider, self._providers_config)
             payload = adapter.inject_markers(prompt, payload)
 
             # Stage 7: Route to LLM Provider
@@ -417,8 +420,8 @@ class RequestPipeline:
 
             payload = self._build_payload(request, prompt, canonical_tools, stream=True)
 
-            provider = detect_provider(request.model)
-            adapter = get_adapter(provider)
+            provider = detect_provider(request.model, self._providers_config)
+            adapter = get_adapter(provider, self._providers_config)
             payload = adapter.inject_markers(prompt, payload)
 
             # Stage 7: Stream from LLM

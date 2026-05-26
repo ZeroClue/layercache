@@ -3,11 +3,11 @@
 {% block page_title %}Semantic Cache{% endblock %}
 {% block content %}
 <div class="stat-grid">
-  <div class="stat-card">
+  <div class="stat-card" data-stat="cache-entries">
     <div class="stat-label">Total Entries</div>
     <div class="stat-value">{{ cache_stats.total_entries }}</div>
   </div>
-  <div class="stat-card">
+  <div class="stat-card" data-stat="cache-valid">
     <div class="stat-label">Valid Entries</div>
     <div class="stat-value">{{ cache_stats.valid_entries }}</div>
   </div>

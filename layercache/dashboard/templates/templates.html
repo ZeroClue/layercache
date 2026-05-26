@@ -2,8 +2,8 @@
 {% block nav_templates %}active{% endblock %}
 {% block page_title %}Prompt Templates{% endblock %}
 {% block content %}
-<button class="btn btn-primary" hx-get="/dashboard/templates/new" hx-target="#template-form">New Template</button>
-<button class="btn" hx-post="/dashboard/templates/reload" hx-target="#template-list">Reload from Disk</button>
+<button class="btn btn-primary" hx-get="/dashboard/templates/new" hx-target="#template-form">New Template <span class="spinner htmx-indicator"></span></button>
+<button class="btn" hx-post="/dashboard/templates/reload" hx-target="#template-list">Reload from Disk <span class="spinner htmx-indicator"></span></button>
 <div id="template-form"></div>
 <div id="template-list">
 <table class="table">
@@ -17,8 +17,8 @@
       <td>{{ t.version }}</td>
       <td>{{ t.description or "" }}</td>
       <td>
-        <button class="btn btn-sm" hx-get="/dashboard/templates/{{ t.name }}/edit" hx-target="#template-form">Edit</button>
-        <button class="btn btn-sm btn-danger" hx-delete="/dashboard/templates/{{ t.name }}" hx-confirm="Delete {{ t.name }}?" hx-target="closest tr" hx-swap="delete">Delete</button>
+        <button class="btn btn-sm" hx-get="/dashboard/templates/{{ t.name }}/edit" hx-target="#template-form">Edit <span class="spinner htmx-indicator"></span></button>
+        <button class="btn btn-sm btn-danger" hx-delete="/dashboard/templates/{{ t.name }}" hx-confirm="Delete {{ t.name }}?" hx-target="closest tr" hx-swap="delete">Delete <span class="spinner htmx-indicator"></span></button>
       </td>
     </tr>
     {% endfor %}

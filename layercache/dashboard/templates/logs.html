@@ -2,7 +2,7 @@
 {% block nav_logs %}active{% endblock %}
 {% block page_title %}Logs{% endblock %}
 {% block header_extra %}
-<button class="btn btn-sm" hx-get="/dashboard/logs" hx-select=".log-table" hx-target=".log-table" hx-swap="outerHTML">Refresh</button>
+<button class="btn btn-sm" hx-get="/dashboard/logs" hx-select=".log-table" hx-target=".log-table" hx-swap="outerHTML">Refresh <span class="spinner htmx-indicator"></span></button>
 {% endblock %}
 {% block content %}
 <div class="log-table">

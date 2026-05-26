@@ -68,6 +68,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Config JSON Schema** (`layercache/schema.py`, `layercache.schema.json`): generated from `LayerCacheSettings.model_json_schema()`, validates `layercache.yaml` at edit time. IDE autocompletion via `# yaml-language-server: $schema=` comment. CLI entry point `layercache-schema`.
 - **Field descriptions and constraints**: every Pydantic config field now has `description=` for IDE tooltips, `ge`/`le`/`gt` constraints on numeric fields, `pattern` on backend string. Catches bad ports, thresholds, TTLs at validation time.
 - Tests: `test_schema_generation`, `test_yaml_has_schema_reference`
+- **P4a — Dynamic ProvidersConfig**: providers now `dict[str, ProviderConfig]` via `RootModel` (arbitrary keys). `adapter: str` field on `ProviderConfig`. `AnthropicProviderConfig` removed. Dashboard models page iterates all configured providers.
+- **P4b — Config-aware adapter resolution**: `detect_provider()` and `get_adapter()` accept optional `ProvidersConfig`. Pipeline wires `self._providers_config` through. `_resolve_provider_api_key` uses config-aware detection.
+- **P4c — Dashboard models page**: shows all providers with adapter, key status, model count. "Show all" toggle reveals all LiteLLM providers (not just configured).
 
 ### Fixed
 - **MetricsDB row_factory**: missing `row_factory = aiosqlite.Row` caused `snapshot_age()` to crash with `tuple indices must be integers, not str`

@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/version-1.4.0-blue" alt="Version 1.4.0">
   <img src="https://img.shields.io/badge/python-3.11+-green" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-115%20passing-brightgreen" alt="115 Tests Passing">
+  <img src="https://img.shields.io/badge/tests-117%20passing-brightgreen" alt="117 Tests Passing">
   <img src="https://img.shields.io/badge/license-MIT-orange" alt="MIT License">
 </p>
 
@@ -151,7 +151,7 @@ Open [http://localhost:8000/dashboard](http://localhost:8000/dashboard) for the 
 <p align="center">
   <img src="docs/images/dashboard_models.png" alt="Dashboard Models" width="600">
   <br>
-  <em>Per-model breakdown</em>
+  <em>Per-model breakdown with adapter column</em>
 </p>
 
 <p align="center">
@@ -320,6 +320,17 @@ proxy:
   port: 8000
   proxy_api_key: "your-optional-proxy-secret"  # Protect the proxy itself
 
+providers:
+  anthropic:
+    api_key_env: ANTHROPIC_API_KEY        # Env var holding the key
+  openai:
+    api_key_env: OPENAI_API_KEY
+  gemini:
+    api_key_env: GOOGLE_API_KEY
+  deepseek:
+    api_key_env: DEEPSEEK_API_KEY          # Any LiteLLM provider works
+    # adapter: openai                      # Override cache strategy (auto-detected if unset)
+
 caching:
   semantic:
     enabled: true
@@ -351,6 +362,7 @@ enhancements:
 | `ANTHROPIC_API_KEY` | Anthropic API key | If using Anthropic |
 | `OPENAI_API_KEY` | OpenAI API key | If using OpenAI |
 | `GOOGLE_API_KEY` | Google Gemini API key | If using Gemini |
+| (custom) | Any env var name per `providers.{name}.api_key_env` in config | Depends on config |
 
 ## Docker Deployment
 
@@ -521,6 +533,8 @@ layercache/
 | [CHANGELOG](CHANGELOG.md) | Version history and changes |
 
 ## License
+
+Built with [OpenCode Go](https://opencode.ai/go?ref=JAFCG08A7T) — fork, automate, ship.
 
 This project is licensed under the **MIT License**. See [LICENSE](LICENSE) for the full text.
 

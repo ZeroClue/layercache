@@ -1,67 +1,5 @@
 {
   "$defs": {
-    "AnthropicProviderConfig": {
-      "description": "Anthropic-specific provider configuration.",
-      "properties": {
-        "api_key_env": {
-          "description": "Environment variable name that holds the API key",
-          "title": "Api Key Env",
-          "type": "string"
-        },
-        "base_url": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Override the default API base URL for this provider",
-          "title": "Base Url"
-        },
-        "default_model": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Default model to use when the request omits the model field",
-          "title": "Default Model"
-        },
-        "max_retries": {
-          "default": 3,
-          "description": "Maximum number of retries on transient failures",
-          "maximum": 10,
-          "minimum": 0,
-          "title": "Max Retries",
-          "type": "integer"
-        },
-        "timeout": {
-          "default": 120,
-          "description": "Request timeout in seconds",
-          "minimum": 1,
-          "title": "Timeout",
-          "type": "integer"
-        },
-        "use_auto_cache_control": {
-          "default": false,
-          "description": "[P1 deferred] Automatically inject cache_control markers on system and historical messages",
-          "title": "Use Auto Cache Control",
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "api_key_env"
-      ],
-      "title": "AnthropicProviderConfig",
-      "type": "object"
-    },
     "CachingConfig": {
       "description": "Caching configuration.",
       "properties": {
@@ -83,7 +21,7 @@
             }
           ],
           "default": null,
-          "description": "Optional: truncate L2 to fit within this token budget (null = no truncation)",
+          "description": "Max L2 tokens before truncation (null = no limit)",
           "title": "Max Session Tokens"
         }
       },
@@ -94,18 +32,18 @@
       "description": "Single enhancement plugin configuration.",
       "properties": {
         "name": {
-          "description": "Unique name used to reference this enhancement in requests (lc_enhancements)",
+          "description": "Reference name used in lc_enhancements requests",
           "title": "Name",
           "type": "string"
         },
         "class_path": {
-          "description": "Python dotted path to the enhancement class, e.g. layercache.enhancements.chain_of_thought.ChainOfThoughtEnhancement",
+          "description": "Python dotted path to the enhancement class",
           "title": "Class Path",
           "type": "string"
         },
         "config": {
           "additionalProperties": true,
-          "description": "Arbitrary keyword arguments passed to the enhancement constructor",
+          "description": "Keyword arguments passed to the constructor",
           "title": "Config",
           "type": "object"
         }
@@ -121,7 +59,7 @@
       "description": "Enhancements configuration.",
       "properties": {
         "registered": {
-          "description": "List of registered enhancement plugins",
+          "description": "Registered enhancement plugins",
           "items": {
             "$ref": "#/$defs/EnhancementConfig"
           },
@@ -143,14 +81,14 @@
         },
         "snapshot_interval_seconds": {
           "default": 60,
-          "description": "Seconds between background metric snapshots",
+          "description": "Seconds between metric snapshots",
           "exclusiveMinimum": 0,
           "title": "Snapshot Interval Seconds",
           "type": "integer"
         },
         "snapshot_retention_days": {
           "default": 7,
-          "description": "Days to retain metric snapshots before pruning",
+          "description": "Days to retain metric snapshots",
           "exclusiveMinimum": 0,
           "title": "Snapshot Retention Days",
           "type": "integer"
@@ -163,7 +101,7 @@
       "description": "Single LLM provider configuration.",
       "properties": {
         "api_key_env": {
-          "description": "Environment variable name that holds the API key",
+          "description": "Env var name holding the provider API key",
           "title": "Api Key Env",
           "type": "string"
         },
@@ -177,7 +115,7 @@
             }
           ],
           "default": null,
-          "description": "Override the default API base URL for this provider",
+          "description": "Override the default API base URL",
           "title": "Base Url"
         },
         "default_model": {
@@ -190,12 +128,12 @@
             }
           ],
           "default": null,
-          "description": "Default model to use when the request omits the model field",
+          "description": "Default model if the request omits the model field",
           "title": "Default Model"
         },
         "max_retries": {
           "default": 3,
-          "description": "Maximum number of retries on transient failures",
+          "description": "Maximum retries on transient failures",
           "maximum": 10,
           "minimum": 0,
           "title": "Max Retries",
@@ -207,6 +145,19 @@
           "minimum": 1,
           "title": "Timeout",
           "type": "integer"
+        },
+        "adapter": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Cache adapter (anthropic, gemini, openai); auto-detected from model name if unset",
+          "title": "Adapter"
         }
       },
       "required": [
@@ -216,45 +167,11 @@
       "type": "object"
     },
     "ProvidersConfig": {
-      "description": "All provider configurations.",
-      "properties": {
-        "anthropic": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/AnthropicProviderConfig"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Anthropic provider settings"
-        },
-        "openai": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ProviderConfig"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "OpenAI provider settings"
-        },
-        "gemini": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ProviderConfig"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Google Gemini provider settings"
-        }
+      "additionalProperties": {
+        "$ref": "#/$defs/ProviderConfig"
       },
+      "default": {},
+      "description": "All provider configurations \u2014 a dict of provider name -> config.\n\nKeys are arbitrary labels (e.g. \"anthropic\", \"openai\", \"deepseek\").\nEach value configures how the proxy connects to that provider.",
       "title": "ProvidersConfig",
       "type": "object"
     },
@@ -285,7 +202,7 @@
             }
           ],
           "default": null,
-          "description": "Optional bearer token to authenticate proxy clients",
+          "description": "Bearer token for client authentication",
           "title": "Proxy Api Key"
         },
         "log_level": {
@@ -303,13 +220,13 @@
       "properties": {
         "enabled": {
           "default": true,
-          "description": "Enable the semantic cache (embedding-based query matching)",
+          "description": "Enable embedding-based semantic cache",
           "title": "Enabled",
           "type": "boolean"
         },
         "backend": {
           "default": "sqlite",
-          "description": "Cache backend (currently only sqlite)",
+          "description": "Cache backend (sqlite or redis)",
           "pattern": "^(sqlite|redis)$",
           "title": "Backend",
           "type": "string"
@@ -322,14 +239,14 @@
         },
         "default_ttl": {
           "default": 300,
-          "description": "Default TTL in seconds for cache entries (0 = no expiry)",
+          "description": "Default TTL in seconds (0 = no expiry)",
           "minimum": 0,
           "title": "Default Ttl",
           "type": "integer"
         },
         "similarity_threshold": {
           "default": 0.95,
-          "description": "Minimum cosine similarity score for a semantic cache hit",
+          "description": "Minimum cosine similarity for a cache hit",
           "maximum": 1.0,
           "minimum": 0.0,
           "title": "Similarity Threshold",
@@ -337,7 +254,7 @@
         },
         "embedder": {
           "default": "BAAI/bge-small-en-v1.5",
-          "description": "FastEmbed model name for generating query embeddings",
+          "description": "FastEmbed model for query embeddings",
           "title": "Embedder",
           "type": "string"
         }
@@ -355,7 +272,7 @@
     },
     "providers": {
       "$ref": "#/$defs/ProvidersConfig",
-      "description": "LLM provider settings"
+      "description": "LLM provider settings (dict of name -> config)"
     },
     "caching": {
       "$ref": "#/$defs/CachingConfig",
