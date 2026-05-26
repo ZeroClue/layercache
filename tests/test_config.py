@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
@@ -220,3 +222,27 @@ class TestConfigRoutes:
         resp = self._save_post({"config_yaml": "proxy:\n  log_level: debug\n", "mtime": "0"})
         assert resp.status_code == 429
         _rate_limit_bucket.clear()
+
+
+def test_schema_generation(tmp_path: Path) -> None:
+    """JSON Schema can be generated from model."""
+    from layercache.schema import generate_schema, write_schema
+
+    schema = generate_schema()
+    assert schema["$schema"] == "https://json-schema.org/draft-07/schema#"
+    assert schema["title"] == "LayerCache Configuration"
+    assert "$defs" in schema
+
+    dest = write_schema(str(tmp_path / "test_schema.json"))
+    assert dest.exists()
+    with open(dest) as f:
+        reloaded = json.load(f)
+    assert reloaded["title"] == "LayerCache Configuration"
+
+
+def test_yaml_has_schema_reference() -> None:
+    """layercache.yaml should reference the schema file."""
+    config_path = Path(__file__).parent.parent / "layercache.yaml"
+    assert config_path.exists()
+    content = config_path.read_text()
+    assert "yaml-language-server: $schema=./layercache.schema.json" in content

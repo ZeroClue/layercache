@@ -1,0 +1,323 @@
+{
+  "$defs": {
+    "AnthropicProviderConfig": {
+      "description": "Anthropic-specific provider configuration.",
+      "properties": {
+        "api_key_env": {
+          "title": "Api Key Env",
+          "type": "string"
+        },
+        "base_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Base Url"
+        },
+        "default_model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Default Model"
+        },
+        "max_retries": {
+          "default": 3,
+          "title": "Max Retries",
+          "type": "integer"
+        },
+        "timeout": {
+          "default": 120,
+          "title": "Timeout",
+          "type": "integer"
+        },
+        "use_auto_cache_control": {
+          "default": false,
+          "title": "Use Auto Cache Control",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "api_key_env"
+      ],
+      "title": "AnthropicProviderConfig",
+      "type": "object"
+    },
+    "CachingConfig": {
+      "description": "Caching configuration.",
+      "properties": {
+        "semantic": {
+          "$ref": "#/$defs/SemanticCacheConfig"
+        },
+        "metrics": {
+          "$ref": "#/$defs/MetricsConfig"
+        },
+        "max_session_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Session Tokens"
+        }
+      },
+      "title": "CachingConfig",
+      "type": "object"
+    },
+    "EnhancementConfig": {
+      "description": "Single enhancement plugin configuration.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "class_path": {
+          "title": "Class Path",
+          "type": "string"
+        },
+        "config": {
+          "additionalProperties": true,
+          "title": "Config",
+          "type": "object"
+        }
+      },
+      "required": [
+        "name",
+        "class_path"
+      ],
+      "title": "EnhancementConfig",
+      "type": "object"
+    },
+    "EnhancementsConfig": {
+      "description": "Enhancements configuration.",
+      "properties": {
+        "registered": {
+          "items": {
+            "$ref": "#/$defs/EnhancementConfig"
+          },
+          "title": "Registered",
+          "type": "array"
+        }
+      },
+      "title": "EnhancementsConfig",
+      "type": "object"
+    },
+    "MetricsConfig": {
+      "description": "Metrics snapshot storage configuration.",
+      "properties": {
+        "db_path": {
+          "default": "/data/metrics.db",
+          "title": "Db Path",
+          "type": "string"
+        },
+        "snapshot_interval_seconds": {
+          "default": 60,
+          "exclusiveMinimum": 0,
+          "title": "Snapshot Interval Seconds",
+          "type": "integer"
+        },
+        "snapshot_retention_days": {
+          "default": 7,
+          "exclusiveMinimum": 0,
+          "title": "Snapshot Retention Days",
+          "type": "integer"
+        }
+      },
+      "title": "MetricsConfig",
+      "type": "object"
+    },
+    "ProviderConfig": {
+      "description": "Single LLM provider configuration.",
+      "properties": {
+        "api_key_env": {
+          "title": "Api Key Env",
+          "type": "string"
+        },
+        "base_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Base Url"
+        },
+        "default_model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Default Model"
+        },
+        "max_retries": {
+          "default": 3,
+          "title": "Max Retries",
+          "type": "integer"
+        },
+        "timeout": {
+          "default": 120,
+          "title": "Timeout",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "api_key_env"
+      ],
+      "title": "ProviderConfig",
+      "type": "object"
+    },
+    "ProvidersConfig": {
+      "description": "All provider configurations.",
+      "properties": {
+        "anthropic": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AnthropicProviderConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "openai": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "gemini": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "ProvidersConfig",
+      "type": "object"
+    },
+    "ProxyConfig": {
+      "description": "Proxy server configuration.",
+      "properties": {
+        "host": {
+          "default": "0.0.0.0",
+          "title": "Host",
+          "type": "string"
+        },
+        "port": {
+          "default": 8000,
+          "title": "Port",
+          "type": "integer"
+        },
+        "proxy_api_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Proxy Api Key"
+        },
+        "log_level": {
+          "default": "info",
+          "title": "Log Level",
+          "type": "string"
+        }
+      },
+      "title": "ProxyConfig",
+      "type": "object"
+    },
+    "SemanticCacheConfig": {
+      "description": "Semantic cache configuration.",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "backend": {
+          "default": "sqlite",
+          "title": "Backend",
+          "type": "string"
+        },
+        "db_path": {
+          "default": "/data/semantic_cache.db",
+          "title": "Db Path",
+          "type": "string"
+        },
+        "default_ttl": {
+          "default": 300,
+          "title": "Default Ttl",
+          "type": "integer"
+        },
+        "similarity_threshold": {
+          "default": 0.95,
+          "title": "Similarity Threshold",
+          "type": "number"
+        },
+        "embedder": {
+          "default": "BAAI/bge-small-en-v1.5",
+          "title": "Embedder",
+          "type": "string"
+        }
+      },
+      "title": "SemanticCacheConfig",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Configuration schema for layercache.yaml",
+  "properties": {
+    "proxy": {
+      "$ref": "#/$defs/ProxyConfig"
+    },
+    "providers": {
+      "$ref": "#/$defs/ProvidersConfig"
+    },
+    "caching": {
+      "$ref": "#/$defs/CachingConfig"
+    },
+    "enhancements": {
+      "$ref": "#/$defs/EnhancementsConfig"
+    }
+  },
+  "title": "LayerCache Configuration",
+  "type": "object",
+  "$id": "https://layercache.ai/schemas/layercache.schema.json",
+  "$schema": "https://json-schema.org/draft-07/schema#"
+}

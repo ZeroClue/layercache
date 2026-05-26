@@ -311,9 +311,10 @@ These fields can be added to any `POST /v1/chat/completions` request:
 
 ## Configuration
 
-All configuration is done via `layercache.yaml`:
+All configuration is done via `layercache.yaml`. A [JSON Schema](layercache.schema.json) is provided for IDE autocompletion (VS Code, PyCharm). Regenerate it with `layercache-schema`:
 
 ```yaml
+# yaml-language-server: $schema=./layercache.schema.json
 proxy:
   host: 0.0.0.0
   port: 8000
@@ -501,6 +502,7 @@ layercache/
 ├── docker-compose.yml            # Docker Compose config
 ├── layercache.yaml               # Default configuration
 ├── pyproject.toml                # Python project config
+├── layercache.schema.json        # JSON Schema for IDE autocompletion
 └── requirements.txt              # Dependencies
 ```
 

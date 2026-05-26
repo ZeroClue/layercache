@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=./layercache.schema.json
 proxy:
   host: 0.0.0.0
   port: 8000
