@@ -23,12 +23,10 @@ RUN python -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-smal
 # Copy application code
 COPY . /app
 
-# Create data directories
-RUN mkdir -p /data/prompts /data/few_shots
-
-# Copy sample data
-COPY data/prompts/*.yaml /data/prompts/ 2>/dev/null || true
-COPY data/few_shots/*.json /data/few_shots/ 2>/dev/null || true
+# Create data directories and copy sample data if present
+RUN mkdir -p /data/prompts /data/few_shots && \
+    if [ -d "data/prompts" ]; then cp -r data/prompts/* /data/prompts/ 2>/dev/null || true; fi && \
+    if [ -d "data/few_shots" ]; then cp -r data/few_shots/* /data/few_shots/ 2>/dev/null || true; fi
 
 # Expose port
 EXPOSE 8000
