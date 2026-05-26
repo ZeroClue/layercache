@@ -85,9 +85,7 @@ class MetricsCollector:
             self._total_cache_creation_tokens += cache_creation_tokens
 
             self._model_requests[model] = self._model_requests.get(model, 0) + 1
-            self._model_input_tokens[model] = (
-                self._model_input_tokens.get(model, 0) + input_tokens
-            )
+            self._model_input_tokens[model] = self._model_input_tokens.get(model, 0) + input_tokens
             self._model_output_tokens[model] = (
                 self._model_output_tokens.get(model, 0) + output_tokens
             )
@@ -99,9 +97,8 @@ class MetricsCollector:
             self._total_tokens_saved += tokens_saved
 
             pricing = self._get_pricing(model)
-            cost_saved = (
-                (cache_read_tokens / 1_000_000)
-                * (pricing["input"] - pricing["cache_read"])
+            cost_saved = (cache_read_tokens / 1_000_000) * (
+                pricing["input"] - pricing["cache_read"]
             )
             cost_cached = (cache_read_tokens / 1_000_000) * pricing["cache_read"] + (
                 (input_tokens - cache_read_tokens) / 1_000_000
@@ -144,21 +141,13 @@ class MetricsCollector:
 
         semantic_total = hits + misses
 
-        provider_hit_rate = (
-            total_cache_read / total_input if total_input > 0 else 0.0
-        )
+        provider_hit_rate = total_cache_read / total_input if total_input > 0 else 0.0
 
-        semantic_hit_rate = (
-            hits / semantic_total if semantic_total > 0 else 0.0
-        )
+        semantic_hit_rate = hits / semantic_total if semantic_total > 0 else 0.0
 
-        avg_latency = (
-            sum(latencies) / len(latencies) if latencies else 0.0
-        )
+        avg_latency = sum(latencies) / len(latencies) if latencies else 0.0
 
-        p95_latency = (
-            self._percentile(latencies, 95) if latencies else 0.0
-        )
+        p95_latency = self._percentile(latencies, 95) if latencies else 0.0
 
         by_model: dict[str, dict[str, float]] = {}
         for model in model_requests:

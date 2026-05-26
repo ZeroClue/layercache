@@ -265,9 +265,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 consecutive_failures += 1
                 backoff = min(interval * (2 ** (consecutive_failures - 1)), 3600)
                 if consecutive_failures == 1:
-                    logger.exception(
-                        "Metrics snapshot task failed (will retry in %ds)", backoff
-                    )
+                    logger.exception("Metrics snapshot task failed (will retry in %ds)", backoff)
                 elif consecutive_failures < 10 or consecutive_failures % 10 == 0:
                     logger.warning(
                         "Metrics snapshot task failed (%d consecutive, retrying in %ds)",
@@ -286,6 +284,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.prompt_registry = _prompt_registry
     app.state.settings = _settings
     app.state.config_path = "layercache.yaml"
+
     def _reload_with_state() -> dict[str, Any]:
         result = reload_config()
         if result.get("status") == "ok":
@@ -709,9 +708,7 @@ def _list_configured_providers() -> list[dict[str, Any]]:
     configured: list[dict[str, Any]] = []
     for name, cfg in _settings.providers.root.items():
         key_set = bool(os.environ.get(cfg.api_key_env)) if cfg.api_key_env else False
-        configured.append(
-            {"name": name, "api_key_env": cfg.api_key_env or "", "key_set": key_set}
-        )
+        configured.append({"name": name, "api_key_env": cfg.api_key_env or "", "key_set": key_set})
     return configured
 
 

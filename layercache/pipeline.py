@@ -199,9 +199,7 @@ class RequestPipeline:
 
         parts: list[str] = []
         for layer_type in (LayerType.SYSTEM, LayerType.CONTEXT, LayerType.SESSION):
-            for msg in sorted(
-                prompt.layers[layer_type], key=lambda m: m.content_hash()
-            ):
+            for msg in sorted(prompt.layers[layer_type], key=lambda m: m.content_hash()):
                 content = msg.content if isinstance(msg.content, str) else str(msg.content)
                 parts.append(content)
         prefix_text = "\n".join(parts)

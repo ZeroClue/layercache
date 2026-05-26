@@ -190,14 +190,16 @@ async def models_page(request: Request) -> HTMLResponse | RedirectResponse:
             elif name in ("gemini", "google"):
                 adapter = "gemini"
             models = by_provider[name]
-            providers.append({
-                "name": name,
-                "adapter": adapter,
-                "adapter_note": adapter_hints.get(adapter, "auto prefix"),
-                "key_set": None,
-                "model_count": len(models),
-                "models": models,
-            })
+            providers.append(
+                {
+                    "name": name,
+                    "adapter": adapter,
+                    "adapter_note": adapter_hints.get(adapter, "auto prefix"),
+                    "key_set": None,
+                    "model_count": len(models),
+                    "models": models,
+                }
+            )
 
     return templates.TemplateResponse(
         request=request,
@@ -435,6 +437,7 @@ async def config_save(request: Request) -> HTMLResponse | RedirectResponse:
 
         # Validate YAML
         import yaml
+
         try:
             parsed = yaml.safe_load(new_yaml)
             if parsed is None:
@@ -447,6 +450,7 @@ async def config_save(request: Request) -> HTMLResponse | RedirectResponse:
 
         # Validate against settings model
         from layercache.config import LayerCacheSettings
+
         try:
             LayerCacheSettings.model_validate(parsed)
         except Exception as e:
@@ -457,6 +461,7 @@ async def config_save(request: Request) -> HTMLResponse | RedirectResponse:
 
         # Atomic write: mkstemp → rename
         import tempfile
+
         fd, tmp_path = tempfile.mkstemp(
             suffix=".yaml",
             prefix="layercache_",
@@ -495,9 +500,7 @@ async def config_save(request: Request) -> HTMLResponse | RedirectResponse:
     warning_html = ""
     if warnings:
         warning_html = (
-            '<div class="alert alert-warning">'
-            + "<br>".join(f"⚠ {w}" for w in warnings)
-            + "</div>"
+            '<div class="alert alert-warning">' + "<br>".join(f"⚠ {w}" for w in warnings) + "</div>"
         )
 
     oob_input = (

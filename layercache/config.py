@@ -30,12 +30,8 @@ class ProxyConfig(BaseModel):
 class ProviderConfig(BaseModel):
     """Single LLM provider configuration."""
 
-    api_key_env: str = Field(
-        description="Env var name holding the provider API key"
-    )
-    base_url: str | None = Field(
-        default=None, description="Override the default API base URL"
-    )
+    api_key_env: str = Field(description="Env var name holding the provider API key")
+    base_url: str | None = Field(default=None, description="Override the default API base URL")
     default_model: str | None = Field(
         default=None, description="Default model if the request omits the model field"
     )
@@ -79,7 +75,9 @@ class ProvidersConfig(RootModel[dict[str, ProviderConfig]]):
                 logger.warning(
                     "Provider %r has unknown adapter %r, falling back to openai. "
                     "Valid adapters: %s",
-                    key, validated, ", ".join(sorted(VALID_ADAPTERS)),
+                    key,
+                    validated,
+                    ", ".join(sorted(VALID_ADAPTERS)),
                 )
                 return "openai"
             return validated
@@ -91,9 +89,7 @@ class ProvidersConfig(RootModel[dict[str, ProviderConfig]]):
 class SemanticCacheConfig(BaseModel):
     """Semantic cache configuration."""
 
-    enabled: bool = Field(
-        default=True, description="Enable embedding-based semantic cache"
-    )
+    enabled: bool = Field(default=True, description="Enable embedding-based semantic cache")
     backend: str = Field(
         default="sqlite",
         pattern="^(sqlite|redis)$",
@@ -152,12 +148,8 @@ class CachingConfig(BaseModel):
 class EnhancementConfig(BaseModel):
     """Single enhancement plugin configuration."""
 
-    name: str = Field(
-        description="Reference name used in lc_enhancements requests"
-    )
-    class_path: str = Field(
-        description="Python dotted path to the enhancement class"
-    )
+    name: str = Field(description="Reference name used in lc_enhancements requests")
+    class_path: str = Field(description="Python dotted path to the enhancement class")
     config: dict[str, Any] = Field(
         default_factory=dict,
         description="Keyword arguments passed to the constructor",
@@ -175,16 +167,12 @@ class EnhancementsConfig(BaseModel):
 class LayerCacheSettings(BaseSettings):
     """Top-level LayerCache configuration."""
 
-    proxy: ProxyConfig = Field(
-        default_factory=ProxyConfig, description="Proxy server settings"
-    )
+    proxy: ProxyConfig = Field(default_factory=ProxyConfig, description="Proxy server settings")
     providers: ProvidersConfig = Field(
         default_factory=ProvidersConfig,
         description="LLM provider settings (dict of name -> config)",
     )
-    caching: CachingConfig = Field(
-        default_factory=CachingConfig, description="Caching behaviour"
-    )
+    caching: CachingConfig = Field(default_factory=CachingConfig, description="Caching behaviour")
     enhancements: EnhancementsConfig = Field(
         default_factory=EnhancementsConfig,
         description="Prompt enhancement plugins",
