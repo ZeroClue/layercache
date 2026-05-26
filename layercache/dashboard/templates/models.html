@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block nav_models %}active{% endblock %}
+{% block page_title %}Models{% endblock %}
+{% block content %}
+<h2>Configured Providers</h2>
+<table class="table">
+  <thead>
+    <tr><th>Provider</th><th>API Key Env</th><th>Key Set</th><th>Models</th></tr>
+  </thead>
+  <tbody>
+    {% for prov in configured_providers %}
+    <tr>
+      <td>{{ prov.name }}</td>
+      <td><code>{{ prov.api_key_env }}</code></td>
+      <td>{% if prov.key_set %}<span class="badge badge-ok">Yes</span>{% else %}<span class="badge badge-error">No</span>{% endif %}</td>
+      <td>
+        <details>
+          <summary>{{ by_provider[prov.name]|length }} models</summary>
+          <ul class="model-list">
+            {% for m in by_provider[prov.name] %}
+            <li><code>{{ m }}</code></li>
+            {% endfor %}
+          </ul>
+        </details>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="text-muted">Total known models: <strong>{{ total_models }}</strong> across {{ by_provider|length }} providers.</p>
+{% endblock %}
+{% block body_class %}dashboard-page{% endblock %}

@@ -23,12 +23,14 @@ class BaseAdapter(ABC):
         self,
         prompt: StratifiedPrompt,
         payload: dict[str, Any],
+        config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Inject provider-specific cache control markers into the request payload.
 
         Args:
             prompt: The stratified prompt with L0-L4 layers.
             payload: The original request payload to modify.
+            config: Optional provider-specific config dict (e.g. use_auto_cache_control).
 
         Returns:
             Modified payload with provider-specific cache markers.

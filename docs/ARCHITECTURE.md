@@ -54,7 +54,7 @@ LayerCache is an asynchronous Python proxy built on FastAPI. It sits between cli
 
 ## Request Pipeline
 
-Every request flows through an 8-stage pipeline implemented in `pipeline.py`:
+Every request flows through an 11-stage pipeline implemented in `pipeline.py`:
 
 ### Stage 1: Semantic Cache Lookup
 
@@ -88,7 +88,17 @@ The Stratifier supports three classification modes:
 - Sort tools alphabetically by `function.name`
 - Sort messages within the same layer by content hash
 
-### Stage 4: Enhancement Injection
+### Stage 4: Session Truncation (P3)
+
+**Purpose**: Keep the cacheable prefix within a manageable token budget.
+
+When `max_session_tokens` is configured, the pipeline splits L2 into turn groups (user→assistant/tool sequences) and drops the oldest complete groups until the remaining fit within the budget. At least one turn is always preserved.
+
+Runs after canonicalization so we're operating on clean, deterministic content. Runs before enhancement injection so L3 is unaffected.
+
+**Trade-off**: Truncation changes the prefix hash, guaranteeing a semantic cache miss for the conversation. The trade-off is that provider prefix caching benefits from a smaller, denser prefix — net positive for long conversations.
+
+### Stage 5: Enhancement Injection
 
 **Purpose**: Apply cache-safe prompt engineering techniques at L3.
 
@@ -99,7 +109,13 @@ The Stratifier supports three classification modes:
 
 **Critical invariant**: Enhancements NEVER modify L0, L1, L2, or L4. The prefix hash remains unchanged.
 
-### Stage 5: Cache Marker Injection
+### Stage 5b: Prefix Threshold Warning (P2)
+
+**Purpose**: Diagnose when the stable prefix is too short for provider caching.
+
+Uses `litellm.token_counter` to estimate tokens in L0+L1+L2. If below ~1024 tokens, logs at INFO level (once per hour per prefix hash). Pure diagnostic — no behavior change, no request modification.
+
+### Stage 6: Cache Marker Injection
 
 **Purpose**: Add provider-specific cache control markers at stable layer boundaries.
 
@@ -107,7 +123,7 @@ The Stratifier supports three classification modes:
 - Instantiate the appropriate adapter (Anthropic, OpenAI, or Gemini)
 - The adapter translates L0-L4 boundaries into provider-specific API parameters
 
-### Stage 6: Provider Routing
+### Stage 7: Provider Routing
 
 **Purpose**: Send the processed request to the LLM provider via LiteLLM.
 
@@ -115,7 +131,7 @@ The Stratifier supports three classification modes:
 - Pass the provider API key from the Authorization header
 - LiteLLM handles HTTP connection pooling, retries, and failover
 
-### Stage 7: Response Handling
+### Stage 8: Response Handling
 
 **Purpose**: Process the LLM response and extract cache metrics.
 
@@ -123,7 +139,7 @@ The Stratifier supports three classification modes:
 - Extract cache usage data (tokens read from cache, tokens written to cache)
 - Record metrics in the MetricsCollector
 
-### Stage 8: Cache Storage
+### Stage 9: Cache Storage
 
 **Purpose**: Store the response in the semantic cache for future lookups.
 
@@ -193,7 +209,19 @@ Stores L0 and L1 content on the server, ensuring all requests using the same tem
 
 **Single Responsibility**: Track, aggregate, and expose cache performance metrics.
 
-Tracks per-request and aggregate statistics with both JSON and Prometheus output formats.
+Tracks per-request and aggregate statistics with both JSON and Prometheus output formats. Uses a `threading.Lock` for concurrent access from request handlers and the background snapshot loop.
+
+### Metrics Database (`metrics/storage.py`)
+
+**Single Responsibility**: Persist time-series metric snapshots to SQLite.
+
+Stores hourly-aggregated snapshots in a separate `metrics.db` (WAL mode). Background `_snapshot_loop` in the FastAPI lifespan inserts snapshots every 60s, prunes data older than 24h, and runs WAL checkpoint after each prune. Uses exponential backoff capped at 3600s with clock-jump resilience via `next_run = time.time() + interval`.
+
+### Dashboard (`dashboard/router.py`, `dashboard/templates/`)
+
+**Single Responsibility**: Provide a web-based management UI via Jinja2, HTMX, and Chart.js.
+
+16 routes covering overview charts, per-model breakdown, cache browser, template CRUD, config editor, and live log viewer (SSE). Auth via Starlette `SessionMiddleware` with secret derived from `SHA256(proxy_api_key)`. Config save requires `HX-Request: true` header (CSRF) and is rate-limited to 10 POSTs/min per IP.
 
 ---
 
@@ -237,6 +265,8 @@ StratifiedPrompt (layers dict)
     │
     ├── Semantic Cache: prefix_hash() + embed(L4)
     ├── Canonicalizer: normalize each layer's content
+    ├── Truncator: drop oldest turns (P3, opt-in)
+    ├── Threshold Check: warn if too short (P2, diagnostic)
     ├── Enhancements: append to L3 layer
     ├── Adapter: reassemble() + inject provider markers
     │
@@ -530,34 +560,24 @@ A single LayerCache instance can handle:
 
 ## Future Architecture Evolution
 
+See the full [**ROADMAP.md**](ROADMAP.md) for the complete prioritized plan. A summary of the three phases:
+
 ### V1 (Current)
 
 ```
 Single Instance
 ├── SQLite semantic cache
+├── SQLite metrics DB (persistent time-series)
 ├── File-based prompt registry
-├── In-memory metrics
+├── Web dashboard (Jinja2 + HTMX + Chart.js)
+├── Config editor with hot-reload
 └── Synchronous provider calls
 ```
 
-### V2 (Planned)
+### V2 — Distributed infrastructure (planned)
 
-```
-Distributed
-├── Redis semantic cache (shared state)
-├── Git-synced prompt registry
-├── Prometheus + Grafana (centralized metrics)
-├── WebSocket support
-└── Multi-modal caching (CLIP embeddings for images)
-```
+Redis cache backend, Git-synced prompt registry, Prometheus + Grafana dashboards, WebSocket support, Helm chart, client rate limiting.
 
-### V3 (Future)
+### V3 — Platform ecosystem (future)
 
-```
-Platform
-├── Web dashboard for cache management
-├── A/B testing framework for enhancements
-├── Plugin marketplace for custom enhancements
-├── Multi-region deployment
-└── Custom embedding model support
-```
+Multi-modal caching (CLIP), A/B testing framework, custom embedding models, plugin marketplace, multi-region deployment.

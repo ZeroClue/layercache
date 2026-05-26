@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block nav_logs %}active{% endblock %}
+{% block page_title %}Logs{% endblock %}
+{% block header_extra %}
+<button class="btn btn-sm" hx-get="/dashboard/logs" hx-select=".log-table" hx-target=".log-table" hx-swap="outerHTML">Refresh</button>
+{% endblock %}
+{% block content %}
+<div class="log-table">
+<table class="table table-logs">
+  <thead>
+    <tr><th>Time</th><th>Level</th><th>Message</th></tr>
+  </thead>
+  <tbody>
+    {% for rec in log_records %}
+    <tr class="log-{{ rec.levelname|lower }}">
+      <td class="log-time">{{ rec.asctime if rec.asctime else "—" }}</td>
+      <td class="log-level">{{ rec.levelname }}</td>
+      <td class="log-msg">{{ rec.getMessage() }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% if not log_records %}
+<p class="text-muted">No log entries captured yet.</p>
+{% endif %}
+{% endblock %}
+{% block body_class %}dashboard-page{% endblock %}

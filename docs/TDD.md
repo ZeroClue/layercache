@@ -369,6 +369,8 @@ CMD ["uvicorn", "layercache.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 ## 7. Future Considerations (Post-V1)
 
+See the full [ROADMAP.md](ROADMAP.md) for the prioritized plan. Items originally identified in this TDD:
+
 * **Streaming Support:** Semantic caching is straightforward with streaming, but calculating token savings from provider prefix caching (Anthropic) requires parsing the `StreamEvent` `usage` blocks, which arrive at the end of the stream. Metrics aggregation must handle delayed reporting.
-* **Multi-Modal Caching:** Extending the Semantic Cache to hash image inputs (using CLIP embeddings) for GPT-4V/Claude 3.5 Sonnet vision tasks.
-* **Distributed Mode:** Using Redis instead of SQLite for the Semantic Cache and Prometheus metrics to allow horizontal scaling of the LayerCache proxy behind a load balancer.
+* **Multi-Modal Caching:** Extending the Semantic Cache to hash image inputs (using CLIP embeddings) for GPT-4V/Claude 3.5 Sonnet vision tasks. Tracked in roadmap as V3 item.
+* **Distributed Mode:** Using Redis instead of SQLite for the Semantic Cache and Prometheus metrics to allow horizontal scaling of the LayerCache proxy behind a load balancer. Tracked in roadmap as V2 item.

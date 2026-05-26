@@ -13,5 +13,9 @@ caching:
   semantic:
     enabled: false
     db_path: /tmp/layercache_semantic.db
+  metrics:
+    db_path: /data/metrics.db
+    snapshot_interval_seconds: 60
+    snapshot_retention_days: 7
 enhancements:
   registered: []

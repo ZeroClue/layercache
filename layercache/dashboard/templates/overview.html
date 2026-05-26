@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block nav_overview %}active{% endblock %}
+{% block page_title %}Overview{% endblock %}
+{% block header_extra %}
+<div class="header-meta">
+  {% if data_age is not none and data_age > 90 %}
+  <span class="badge badge-warning" title="Data may be stale">Data {{ data_age }}s old</span>
+  {% elif data_age is not none %}
+  <span class="badge badge-ok">Updated {{ data_age }}s ago</span>
+  {% else %}
+  <span class="badge badge-muted">No data yet</span>
+  {% endif %}
+  <button class="btn btn-sm" hx-get="/dashboard/" hx-select=".main-content" hx-target=".main-content" hx-swap="outerHTML">Refresh</button>
+</div>
+{% endblock %}
+{% block content %}
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-label">LLM Requests</div>
+    <div class="stat-value">{{ stats.llm_requests_total }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Semantic Cache Hit Rate</div>
+    <div class="stat-value">{{ "%.1f"|format(stats.semantic_cache_hit_rate * 100) }}%</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Provider Cache Hit Rate</div>
+    <div class="stat-value">{{ "%.1f"|format(stats.provider_token_cache_hit_rate * 100) }}%</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Tokens Saved</div>
+    <div class="stat-value">{{ "{:,}"|format(stats.estimated_tokens_saved) }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Cost Saved</div>
+    <div class="stat-value">${{ "%.2f"|format(stats.estimated_cost_saved_usd) }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Avg Latency</div>
+    <div class="stat-value">{{ "%.0f"|format(stats.avg_request_duration_seconds * 1000) }}ms</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">P95 Latency</div>
+    <div class="stat-value">{{ "%.0f"|format(stats.p95_request_duration_seconds * 1000) }}ms</div>
+  </div>
+</div>
+
+<div class="chart-grid">
+  <div class="chart-card">
+    <h3>Request Rate (24h)</h3>
+    <canvas id="chart-requests"></canvas>
+  </div>
+  <div class="chart-card">
+    <h3>Cache Hit Rate (24h)</h3>
+    <canvas id="chart-cache-rate"></canvas>
+  </div>
+  <div class="chart-card">
+    <h3>Token Usage (24h)</h3>
+    <canvas id="chart-tokens"></canvas>
+  </div>
+</div>
+{% endblock %}
+{% block body_class %}dashboard-page{% endblock %}

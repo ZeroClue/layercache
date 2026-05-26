@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LayerCache Dashboard</title>
+<script src="/static/vendor/htmx.min.js"></script>
+<script src="/static/vendor/chart.umd.min.js"></script>
+<link rel="stylesheet" href="/static/dashboard.css">
+</head>
+<body class="{% block body_class %}{% endblock %}">
+<div class="sidebar">
+  <div class="sidebar-header">
+    <h2>LayerCache</h2>
+    <span class="sidebar-version" id="version-label">v1.2.0</span>
+  </div>
+  <nav class="sidebar-nav">
+    <a href="/dashboard/" class="nav-item {% block nav_overview %}{% endblock %}">Overview</a>
+    <a href="/dashboard/models" class="nav-item {% block nav_models %}{% endblock %}">Models</a>
+    <a href="/dashboard/cache" class="nav-item {% block nav_cache %}{% endblock %}">Cache</a>
+    <a href="/dashboard/templates" class="nav-item {% block nav_templates %}{% endblock %}">Templates</a>
+    <a href="/dashboard/config" class="nav-item {% block nav_config %}{% endblock %}">Config</a>
+    <a href="/dashboard/logs" class="nav-item {% block nav_logs %}{% endblock %}">Logs</a>
+  </nav>
+  <div class="sidebar-footer">
+    <a href="/dashboard/logout" class="nav-item logout">Log out</a>
+  </div>
+</div>
+<div class="main">
+  <div class="main-header">
+    <h1>{% block page_title %}Dashboard{% endblock %}</h1>
+    {% block header_extra %}{% endblock %}
+  </div>
+  <div id="main-content" class="main-content">
+    {% block content %}{% endblock %}
+  </div>
+</div>
+</body>
+</html>

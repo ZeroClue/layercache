@@ -28,7 +28,7 @@ Config in `pyproject.toml`: line-length 100, mypy strict, ruff selects `E,F,I,N,
 ## Architecture essentials
 
 - FastAPI async proxy, entrypoint `layercache/main.py:app`
-- 8-stage `RequestPipeline` (semantic cache lookup → stratify L0-L4 → canonicalize → enhance at L3 → inject provider markers → LiteLLM route → handle response → store in cache)
+- 11-stage `RequestPipeline` (semantic cache lookup → stratify L0-L4 → canonicalize → **truncate session** → **prefix threshold check** → enhance at L3 → inject provider markers → LiteLLM route → handle response → store in cache → background cache creation)
 - Provider adapters in `layercache/adapters/`: Anthropic (explicit `cache_control`), OpenAI (automatic prefix caching), Gemini (`CachedContent` API). Detected from model name prefixes (anthropic/claude, gpt, gemini).
 - Enhancement plugins in `layercache/enhancements/` inject only at L3; they never modify L0-L2 (prefix hash invariant)
 - Semantic cache: SQLite via aiosqlite + FastEmbed (`BAAI/bge-small-en-v1.5`, 384d) in ProcessPoolExecutor
@@ -46,8 +46,9 @@ layercache/config.py         — Pydantic settings from layercache.yaml
 layercache/adapters/         — Anthropic/OpenAI/Gemini cache markers + /v1/messages shim
 layercache/enhancements/     — CoT, structured output, self-critique, dynamic few-shot
 layercache/cache/            — Embedder + SQLite semantic cache
-layercache/metrics/          — MetricsCollector + RequestTimer
+layercache/metrics/          — MetricsCollector, MetricsDB, MetricsDB checkpoint()
 layercache/registry/         — Prompt template registry (YAML/JSON)
+layercache/dashboard/        — Web dashboard (Jinja2 + HTMX + Chart.js)
 ```
 
 ## Gotchas
@@ -57,3 +58,10 @@ layercache/registry/         — Prompt template registry (YAML/JSON)
 - No CI workflows or pre-commit hooks; quality is manual
 - Prompt templates live in `/data/prompts/` (YAML/JSON); sample templates at `data/prompts/`
 - LayerCache request extensions go in `extra_body`: `lc_template`, `lc_enhancements`, `lc_cache_ttl`, `lc_layer_hints`, `lc_skip_semantic_cache`, `lc_bypass_cache`
+- Dashboard config save requires `HX-Request: true` header (CSRF check) — all HTMX forms include this automatically
+- Config save is rate-limited to 10 POSTs/min per IP (local-only safety)
+- Metrics snapshot loop uses exponential backoff capped at 3600s; WAL checkpoint runs after each prune
+- `reload_config()` updates log level and pipeline timeout/retries; semantic cache changes require full restart
+- `MetricsCollector` uses a `threading.Lock` for concurrent access from request handlers and the snapshot loop
+- `max_session_tokens` in config: truncates L2 to fit within token budget (provider-agnostic); also hot-reloadable
+- Prefix threshold warning logged at INFO once per hour per prefix hash when L0+L1+L2 is below ~1024 tokens

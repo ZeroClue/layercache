@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block nav_templates %}active{% endblock %}
+{% block page_title %}Prompt Templates{% endblock %}
+{% block content %}
+<button class="btn btn-primary" hx-get="/dashboard/templates/new" hx-target="#template-form">New Template</button>
+<button class="btn" hx-post="/dashboard/templates/reload" hx-target="#template-list">Reload from Disk</button>
+<div id="template-form"></div>
+<div id="template-list">
+<table class="table">
+  <thead>
+    <tr><th>Name</th><th>Version</th><th>Description</th><th>Actions</th></tr>
+  </thead>
+  <tbody>
+    {% for t in templates %}
+    <tr>
+      <td><code>{{ t.name }}</code></td>
+      <td>{{ t.version }}</td>
+      <td>{{ t.description or "" }}</td>
+      <td>
+        <button class="btn btn-sm" hx-get="/dashboard/templates/{{ t.name }}/edit" hx-target="#template-form">Edit</button>
+        <button class="btn btn-sm btn-danger" hx-delete="/dashboard/templates/{{ t.name }}" hx-confirm="Delete {{ t.name }}?" hx-target="closest tr" hx-swap="delete">Delete</button>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% if not templates %}
+<p class="text-muted">No templates registered.</p>
+{% endif %}
+{% endblock %}
+{% block body_class %}dashboard-page{% endblock %}

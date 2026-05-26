@@ -1,0 +1,19 @@
+<div class="card">
+  <h3>{% if template.name %}Edit: {{ template.name }}{% else %}New Template{% endif %}</h3>
+  <form method="POST" action="{{ action }}" class="template-form">
+    {% if not template.name %}
+    <label for="name">Name</label>
+    <input type="text" name="name" id="name" class="input" required>
+    {% endif %}
+    <label for="version">Version</label>
+    <input type="text" name="version" id="version" class="input" value="{{ template.version or '1.0' }}">
+    <label for="description">Description</label>
+    <input type="text" name="description" id="description" class="input" value="{{ template.description or '' }}">
+    <label for="template">Template</label>
+    <textarea name="template" id="template" class="input template-textarea" rows="8">{{ template.template or '' }}</textarea>
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">Save</button>
+      <button type="button" class="btn" onclick="this.closest('.card').remove()">Cancel</button>
+    </div>
+  </form>
+</div>

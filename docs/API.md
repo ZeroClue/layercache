@@ -70,7 +70,7 @@ These can be included in the request body alongside standard fields:
 | `lc_cache_ttl` | integer | `300` | Semantic cache TTL in seconds (0 = skip) |
 | `lc_layer_hints` | object | `null` | Explicit message index to layer mapping |
 | `lc_skip_semantic_cache` | boolean | `false` | Skip semantic cache lookup |
-| `lc_bypass_cache` | `false` | `false` | Skip all caching |
+| `lc_bypass_cache` | boolean | `false` | Skip all caching |
 
 #### Example Request
 
@@ -340,6 +340,82 @@ lc_request_duration_seconds_p95 3.456
 
 ---
 
+### GET /v1/cache/metrics/history
+
+Get time-series history of cache metrics. Snapshots are taken every 60 seconds and retained for 24 hours.
+
+#### Response
+
+```json
+{
+  "snapshots": [
+    {
+      "timestamp": 1700000000,
+      "llm_requests_total": 1200,
+      "semantic_cache_hits_total": 170,
+      "semantic_cache_misses_total": 1030,
+      "total_input_tokens": 1200000,
+      "total_output_tokens": 600000,
+      "total_cache_read_tokens": 780000,
+      "total_cache_creation_tokens": 420000,
+      "estimated_cost_saved_usd": 20.80,
+      "estimated_total_cost_usd": 43.50
+    }
+  ],
+  "oldest_snapshot_age_hours": 0.5,
+  "snapshot_interval_seconds": 60
+}
+```
+
+---
+
+### GET /v1/cache/metrics/status
+
+Get the status of the metrics database.
+
+#### Response
+
+```json
+{
+  "total_rows": 720,
+  "oldest_snapshot": "2025-01-01T00:00:00",
+  "newest_snapshot": "2025-01-01T12:00:00",
+  "db_size_bytes": 32768,
+  "wal_size_bytes": 4096,
+  "healthy": true
+}
+```
+
+---
+
+### GET /dashboard
+
+Web-based management dashboard (HTML). Requires authentication if `proxy_api_key` is configured. Provides overview, per-model breakdown, cache browser, template editor, config editor, and live log viewer.
+
+#### Dashboard Routes
+
+| Route | Method | Description |
+|-------|--------|-------------|
+| `GET /dashboard` | HTML | Overview with request rate, latency, cost charts |
+| `GET /dashboard/models` | HTML | Per-model metrics breakdown |
+| `GET /dashboard/cache` | HTML | Semantic cache browser |
+| `GET /dashboard/templates` | HTML | Template list and management |
+| `GET /dashboard/templates/new` | HTML | New template form |
+| `GET /dashboard/templates/{name}/edit` | HTML | Edit template form |
+| `POST /dashboard/templates/{name}/edit` | Action | Save template edit |
+| `POST /dashboard/templates/{name}/delete` | Action | Delete template |
+| `GET /dashboard/config` | HTML | Read-only config view or config editor |
+| `POST /dashboard/config/save` | Action | Save config (HTMX, rate-limited, CSRF-protected) |
+| `GET /dashboard/logs` | HTML | Live log viewer |
+| `GET /dashboard/logs/stream` | SSE | Log event stream |
+| `GET /dashboard/login` | HTML | Login form (if auth enabled) |
+| `POST /dashboard/login` | Action | Login |
+| `GET /dashboard/logout` | Action | Logout |
+
+Config save requires `HX-Request: true` header and is rate-limited to 10 POSTs/min per IP.
+
+---
+
 ## Prompt Template Endpoints
 
 ### GET /v1/prompts/templates
@@ -476,7 +552,7 @@ Check the health status of the LayerCache service.
 ```json
 {
   "status": "healthy",
-  "version": "1.2.0",
+  "version": "1.4.0",
   "semantic_cache": true,
   "semantic_cache_stats": {
     "total_entries": 42,

@@ -547,9 +547,61 @@ response = client.chat.completions.create(
 
 ---
 
+## Managing Long Conversations
+
+### L2 Session Truncation
+
+In long multi-turn conversations, the session history (L2) grows unboundedly. This pushes the stable prefix further from the end, making provider prefix caching less effective and consuming more input tokens per request.
+
+LayerCache can automatically truncate L2 to fit within a token budget, keeping only the most recent turns:
+
+```yaml
+caching:
+  max_session_tokens: 2000   # Keep at most ~2000 tokens of conversation history
+```
+
+When enabled:
+- The pipeline splits L2 into **turn groups** (user → assistant/tool sequences)
+- Oldest complete groups are dropped until the remaining fit within budget
+- At least one turn is always preserved
+- Tool-call interleaves (user → tool_call → tool_result → assistant) are kept as complete clusters
+
+**Trade-off**: Truncation changes the prefix hash, which means the semantic cache will miss for the conversation. However, provider prefix caching benefits from the smaller, denser prefix — net positive for long conversations with stable L0/L1.
+
+**Default**: `null` (no truncation). Opt-in only.
+
+### Prefix Threshold Diagnostics
+
+Provider prefix caching (Anthropic, OpenAI, Gemini) requires a minimum prefix of ~1024 tokens. If L0+L1+L2 is below this threshold, cache markers are ineffective.
+
+LayerCache logs an INFO message (once per hour per prefix) when the stable prefix is too short:
+
+```
+Stable prefix (L0+L1+L2) ~500 tokens (model=claude-3-5-sonnet-20241022) —
+below ~1024 token caching threshold. Add more content to L0/L1 or expect
+low cache hit rates.
+```
+
+This diagnostic fires after any truncation, so it measures the final prefix length.
+
+---
+
 ## Monitoring & Metrics
 
-### JSON Dashboard
+### Web Dashboard
+
+LayerCache includes a built-in web dashboard at `http://localhost:8000/dashboard`. It provides:
+
+- **Overview**: Request rate, latency distribution, cost savings charts (live-updating via Chart.js)
+- **Models**: Per-model breakdown of requests, tokens, cache hit rate
+- **Cache**: Semantic cache browser (entries, expiry, similarity)
+- **Templates**: Template list, create, edit, and delete
+- **Config**: In-browser config editor with save support (requires `HX-Request` header, rate-limited)
+- **Logs**: Live streaming log viewer (via SSE)
+
+If `proxy_api_key` is configured, the dashboard requires login. Otherwise, it's open.
+
+### JSON Metrics
 
 ```bash
 curl http://localhost:8000/v1/cache/metrics
@@ -702,4 +754,4 @@ A: You can invalidate by prefix hash via the API, or simply delete the SQLite da
 
 **Q: Can I run multiple LayerCache instances?**
 
-A: In V1, each instance has its own local SQLite cache. For multi-instance deployment, use Redis as the cache backend (planned for a future release). The provider prefix caching (Anthropic/OpenAI) works across all instances independently.
+A: In V1, each instance has its own local SQLite cache. For multi-instance deployment, use Redis as the cache backend (planned for V2 — see [ROADMAP.md](ROADMAP.md)). The provider prefix caching (Anthropic/OpenAI) works across all instances independently.

@@ -9,19 +9,25 @@ Main FastAPI application that provides:
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import hmac
 import json
 import logging
 import os
+import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 import litellm
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
+from starlette.middleware.sessions import SessionMiddleware
+from starlette.staticfiles import StaticFiles
 
 from .adapters import detect_provider
 from .adapters.anthropic_messages import (
@@ -33,8 +39,11 @@ from .cache.embedder import get_embedder
 from .cache.semantic import SemanticCache
 from .canonicalizer import Canonicalizer
 from .config import LayerCacheSettings
+from .dashboard import router as dashboard_router
+from .dashboard.router import _log_ring
 from .enhancements import DynamicFewShotEnhancement, create_default_registry
 from .metrics.collector import MetricsCollector
+from .metrics.storage import MetricsDB
 from .models import LayerCacheRequest
 from .pipeline import RequestPipeline, validate_model_name
 from .registry.prompt_registry import PromptRegistry
@@ -42,19 +51,103 @@ from .stratifier import Stratifier
 
 logger = logging.getLogger("layercache")
 
+# Derive session secret: env var > hash of proxy key > dev fallback
+_SESSION_SECRET = os.environ.get("LAYERCACHE_SESSION_SECRET")
+if not _SESSION_SECRET:
+    try:
+        with open("layercache.yaml") as f:
+            import yaml
+
+            _cfg = yaml.safe_load(f) or {}
+        _proxy_key = _cfg.get("proxy", {}).get("proxy_api_key")
+        if _proxy_key:
+            _SESSION_SECRET = hashlib.sha256(_proxy_key.encode()).hexdigest()
+        else:
+            _SESSION_SECRET = hashlib.sha256(b"layercache-local-dev").hexdigest()
+    except Exception:
+        _SESSION_SECRET = hashlib.sha256(b"layercache-local-dev").hexdigest()
+
 # Global instances (initialized in lifespan)
 _settings: LayerCacheSettings | None = None
 _pipeline: RequestPipeline | None = None
 _metrics: MetricsCollector | None = None
+_metrics_db: MetricsDB | None = None
+_snapshot_task: Any = None
 _semantic_cache: SemanticCache | None = None
 _prompt_registry: PromptRegistry | None = None
 _stratifier: Stratifier | None = None
 
 
+def reload_config() -> dict[str, Any]:
+    """Hot-reload layercache.yaml from disk.
+
+    Re-reads the config file, validates it, and updates the running
+    application state. Returns a dict with status and warnings.
+    """
+    global _settings
+    warnings: list[str] = []
+
+    config_path = "layercache.yaml"
+    if not Path(config_path).exists():
+        return {"status": "error", "error": f"Config file not found: {config_path}"}
+
+    import yaml
+
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+    except yaml.YAMLError as e:
+        return {"status": "error", "error": f"YAML parsing failed: {e}"}
+
+    try:
+        new_settings = LayerCacheSettings.model_validate(raw)
+    except Exception as e:
+        return {"status": "error", "error": f"Validation failed: {e}"}
+
+    old_settings = _settings
+    _settings = new_settings
+
+    # Apply log level
+    logging.getLogger("layercache").setLevel(
+        getattr(logging, _settings.proxy.log_level.upper(), logging.INFO)
+    )
+
+    # Update pipeline timeout/retries
+    if _pipeline:
+        provider = (
+            _settings.providers.anthropic
+            or _settings.providers.openai
+            or _settings.providers.gemini
+        )
+        _pipeline._timeout = provider.timeout if provider else 120
+        _pipeline._max_retries = provider.max_retries if provider else 3
+        _pipeline._max_session_tokens = _settings.caching.max_session_tokens
+
+    # Apply enhancement config changes
+    if _pipeline and old_settings:
+        old_enh_names = {e.name for e in old_settings.enhancements.registered}
+        new_enh_names = {e.name for e in _settings.enhancements.registered}
+        if old_enh_names != new_enh_names:
+            warnings.append("Enhancement changes require a full restart to take effect")
+
+    # Check for changes that need restart
+    if old_settings:
+        if old_settings.caching.semantic != _settings.caching.semantic:
+            warnings.append("Semantic cache config changes require a full restart")
+
+    logger.info("Configuration reloaded from %s", config_path)
+    return {
+        "status": "ok",
+        "warnings": warnings,
+        "config_path": config_path,
+    }
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan: initialize and cleanup resources."""
-    global _settings, _pipeline, _metrics, _semantic_cache, _prompt_registry, _stratifier
+    global _settings, _pipeline, _metrics, _metrics_db, _snapshot_task
+    global _semantic_cache, _prompt_registry, _stratifier
 
     # Load configuration (merge YAML + env vars)
     _settings = LayerCacheSettings.from_yaml("layercache.yaml")
@@ -87,6 +180,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Initialize metrics
     _metrics = MetricsCollector()
+    _metrics_db = MetricsDB(db_path=_settings.caching.metrics.db_path)
+    await _metrics_db.initialize()
 
     # Initialize prompt registry
     _prompt_registry = PromptRegistry(templates_dir="/data/prompts")
@@ -150,12 +245,79 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         metrics=_metrics,
         timeout=timeout,
         max_retries=max_retries,
+        max_session_tokens=_settings.caching.max_session_tokens,
     )
+
+    # Start background metrics snapshot task
+    async def _snapshot_loop() -> None:
+        interval = _settings.caching.metrics.snapshot_interval_seconds
+        retention = _settings.caching.metrics.snapshot_retention_days
+        consecutive_failures = 0
+        next_run = time.time() + interval
+        while True:
+            try:
+                now = time.time()
+                sleep_sec = max(0.0, next_run - now)
+                if sleep_sec > 0:
+                    await asyncio.sleep(sleep_sec)
+                next_run = time.time() + interval
+                if _metrics and _metrics_db:
+                    ts = int(time.time())
+                    metrics_data = _metrics.get_metrics()
+                    await _metrics_db.insert_snapshot(ts, metrics_data)
+                    await _metrics_db.prune(retention_days=retention)
+                    await _metrics_db.checkpoint()
+                consecutive_failures = 0
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                consecutive_failures += 1
+                backoff = min(interval * (2 ** (consecutive_failures - 1)), 3600)
+                if consecutive_failures == 1:
+                    logger.exception(
+                        "Metrics snapshot task failed (will retry in %ds)", backoff
+                    )
+                elif consecutive_failures < 10 or consecutive_failures % 10 == 0:
+                    logger.warning(
+                        "Metrics snapshot task failed (%d consecutive, retrying in %ds)",
+                        consecutive_failures,
+                        backoff,
+                    )
+                await asyncio.sleep(backoff)
+                continue
+
+    _snapshot_task = asyncio.create_task(_snapshot_loop())
+
+    # Set shared state for dashboard access
+    app.state.metrics = _metrics
+    app.state.metrics_db = _metrics_db
+    app.state.semantic_cache = _semantic_cache
+    app.state.prompt_registry = _prompt_registry
+    app.state.settings = _settings
+    app.state.config_path = "layercache.yaml"
+    def _reload_with_state() -> dict[str, Any]:
+        result = reload_config()
+        if result.get("status") == "ok":
+            app.state.settings = _settings
+        return result
+
+    app.state.reload_config = _reload_with_state
+
+    # Attach log ring buffer
+    logging.getLogger("layercache").addHandler(_log_ring)
 
     logger.info("LayerCache initialized successfully")
     yield
 
     # Cleanup
+    if _snapshot_task:
+        _snapshot_task.cancel()
+        try:
+            await _snapshot_task
+        except asyncio.CancelledError:
+            pass
+    if _metrics_db:
+        await _metrics_db.close()
     if _semantic_cache:
         await _semantic_cache.close()
     embedder = get_embedder()
@@ -166,7 +328,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="LayerCache",
     description="Intelligent Prompt Enhancement & Token Caching Proxy",
-    version="1.2.0",
+    version="1.4.0",
     lifespan=lifespan,
 )
 
@@ -178,6 +340,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Dashboard session support
+app.add_middleware(SessionMiddleware, secret_key=_SESSION_SECRET)
+
+# Static files (dashboard CSS/JS, vendor libs)
+static_dir = Path(__file__).parent / "static"
+static_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+# Dashboard UI routes
+app.include_router(dashboard_router)
 
 
 # --- Request ID Middleware ---
@@ -204,6 +377,20 @@ async def _verify_proxy_key(authorization: str | None) -> None:
             raise HTTPException(status_code=401, detail="Proxy API key required")
         if not hmac.compare_digest(authorization, expected):
             raise HTTPException(status_code=403, detail="Invalid proxy API key")
+
+
+async def _verify_proxy_or_dashboard(request: Request, authorization: str | None) -> None:
+    """Verify proxy API key or authenticated dashboard session."""
+    if not _settings or not _settings.proxy.proxy_api_key:
+        return
+    if authorization:
+        expected = f"Bearer {_settings.proxy.proxy_api_key}"
+        if hmac.compare_digest(authorization, expected):
+            return
+    session = getattr(request.state, "session", {})
+    if session.get("authenticated", False):
+        return
+    raise HTTPException(status_code=401, detail="Authentication required")
 
 
 def _resolve_provider_api_key(model: str) -> str:
@@ -571,6 +758,82 @@ async def prometheus_metrics(
 
     metrics_text = _metrics.get_prometheus_metrics()
     return Response(content=metrics_text, media_type="text/plain")
+
+
+@app.get("/v1/cache/metrics/history")
+async def cache_metrics_history(
+    request: Request,
+    authorization: str | None = Header(None),
+) -> JSONResponse:
+    """Return bucketed time-series history for all tracked metrics.
+
+    Query params:
+      range: time range in seconds (default 3600 = 1h)
+      resolution: bucket size in seconds (default 300 = 5m)
+    """
+    await _verify_proxy_or_dashboard(request, authorization)
+    if _metrics_db is None:
+        return JSONResponse(content={"error": "Metrics storage not initialized"})
+
+    now = int(time.time())
+    try:
+        range_seconds = int(request.query_params.get("range", 3600))
+        bucket_seconds = int(request.query_params.get("resolution", 300))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="range and resolution must be integers")
+    if range_seconds < 1 or bucket_seconds < 1:
+        raise HTTPException(status_code=400, detail="range and resolution must be >= 1")
+    if range_seconds > 86400 * 365:
+        range_seconds = 86400 * 365
+    start_ts = now - range_seconds
+
+    counters = await _metrics_db.query_counters_with_labels(start_ts, now)
+    series: list[dict[str, Any]] = []
+    for counter in counters:
+        labels = json.loads(counter["labels"])
+        data = await _metrics_db.query_history(
+            name=counter["name"],
+            start_ts=start_ts,
+            end_ts=now,
+            bucket_seconds=bucket_seconds,
+            labels_filter=counter["labels"],
+        )
+        if data:
+            series.append(
+                {
+                    "name": counter["name"],
+                    "labels": labels,
+                    "buckets": data,
+                }
+            )
+
+    return JSONResponse(
+        content={
+            "range_seconds": range_seconds,
+            "bucket_seconds": bucket_seconds,
+            "series": series,
+        }
+    )
+
+
+@app.get("/v1/cache/metrics/status")
+async def cache_metrics_status(
+    request: Request,
+    authorization: str | None = Header(None),
+) -> JSONResponse:
+    """Return snapshot age and storage status."""
+    await _verify_proxy_or_dashboard(request, authorization)
+    if _metrics_db is None:
+        return JSONResponse(content={"enabled": False})
+
+    age = await _metrics_db.snapshot_age()
+    return JSONResponse(
+        content={
+            "enabled": True,
+            "snapshot_age_seconds": age,
+            "stale": age is not None and age > 90,
+        }
+    )
 
 
 # --- Prompt Registry Management ---

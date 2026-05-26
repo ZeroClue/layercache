@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.0] - 2026-05-26
+
+### Added
+- **Metrics storage backend** (`metrics/storage.py`): persistent `metric_snapshots` table with WAL mode, snapshot insert, bucketed history queries, prune, and WAL checkpoint
+- **Background snapshot task**: minute-aligned periodic counter dump with exponential backoff (capped at 3600s), WAL checkpoint after each prune
+- **Metrics history endpoint** `GET /v1/cache/metrics/history` — bucketed time-series via `GROUP BY CAST(ts / ? AS INTEGER)`
+- **Metrics status endpoint** `GET /v1/cache/metrics/status` — snapshot age tracking
+- **Built-in Web Dashboard** (`layercache/dashboard/`):
+  - 10 Jinja2 templates (base, login, overview with 7 stat cards + 3 Chart.js charts, models, cache, templates CRUD, config editor, logs)
+  - 16 routes with session auth (proxy API key login, auto-pass when no key configured)
+  - Static assets: `dashboard.css` (dark theme, responsive), `dashboard.js` (Chart.js re-init on HTMX swaps)
+  - Vendored `htmx.min.js` (v2.0.4) + `chart.umd.min.js` (v4.4.7)
+  - `LogRingBuffer` with threading lock for log tail
+- **Config write-back** (`POST /dashboard/config/save`): atomic tempfile+rename, YAML syntax validation, Pydantic model validation, mtime conflict detection, HTMX OOB mtime update
+- **Hot-reload** (`reload_config()`): re-reads `layercache.yaml`, validates via `LayerCacheSettings.model_validate()`, applies log level, pipeline timeout/retries, warns on changes needing restart
+- **CSRF protection** on config save: rejects POSTs without `HX-Request: true` header
+- **Rate limiting** on config save: 10 POSTs/min per IP
+- **Read-only detection**: save button hidden when config file is not writable
+- 17 new tests: `tests/test_config.py` for reload function, save endpoint, mtime conflict, atomic write, CSRF, rate limiting
+
+### Changed
+- `MetricsCollector` now uses `threading.Lock` for concurrent-safe access
+- Pricing fuzzy match sorts keys by length descending so specific substrings win
+- Snapshot loop: `max(0, ...)` guard on sleep, exponential backoff capped at 1h, log throttled
+- `MetricsDB.checkpoint()` added; called after each prune cycle
+- Config path centralised via `request.app.state.config_path`
+- Dashboard count: 115 tests (from 98)
+
+### Removed
+- Dead `_mask_secrets` function from `layercache/dashboard/router.py`
+
+### Fixed
+- `reload_config()` YAML parse errors now caught (was outside try/except)
+- `app.state.settings` now updated after hot-reload
+- Config mtime hidden input uses `hx-swap-oob="outerHTML"` (innerHTML is a no-op on void `<input>`)
+- Config save uses `tempfile.mkstemp()` instead of fixed `.tmp` filename
+- Config save serialized with `asyncio.Lock()` to prevent concurrent-write races
+
+## [1.4.0] - 2026-05-26
+
+### Added
+- **L2 session truncation** (`caching.max_session_tokens`): pipeline drops oldest conversation turns until the stable prefix fits within a token budget. Turn-group-aware — keeps complete user/assistant/tool clusters. Always preserves at least one turn. Default `null` (no truncation). Hot-reloadable.
+- **Prefix threshold warning**: pipeline logs at INFO when L0+L1+L2 is below ~1024 tokens, rate-limited to once per hour per prefix hash. Uses `litellm.token_counter` per-model with chars/2 fallback.
+- `AnthropicProviderConfig` with `use_auto_cache_control: bool = False` (field defined, not yet wired)
+
+### Changed
+- Pipeline expanded from 8 to 11 stages: canonicalize → truncate session → prefix check → enhance → inject markers → route → handle → store → background cache
+- `BaseAdapter.inject_markers()` accepts optional `config` dict parameter
+
+### Documentation
+- README.md: version badge 1.4.0, pipeline diagram, features table, config reference
+- AGENTS.md: 11-stage pipeline, gotchas for truncation and threshold warning
+- CHANGELOG.md: this entry
+
 ## [1.2.0] - 2026-05-26
 
 ### Added
@@ -249,10 +303,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Planned (Post-V1)
-- Redis backend for semantic cache (distributed mode)
-- Multi-modal caching with CLIP embeddings for vision tasks
-- A/B testing framework for enhancement quality measurement
-- Web-based cache metrics dashboard
-- Rate limiting per client
-- Request/response logging with configurable retention
-- Kubernetes Helm chart
+
+See the [ROADMAP.md](docs/ROADMAP.md) for the full prioritized plan. Key themes:
+- **V2**: Redis distributed cache, Git-synced prompt registry, Prometheus/Grafana dashboards, WebSocket support, Helm chart, client rate limiting
+- **V3**: Multi-modal CLIP caching, A/B testing framework, custom embedding models, plugin marketplace, multi-region deployment

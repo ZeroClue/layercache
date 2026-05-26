@@ -68,6 +68,8 @@ class SemanticCache:
 
         self._db = await aiosqlite.connect(self.db_path)
         self._db.row_factory = aiosqlite.Row
+        cursor = await self._db.execute("PRAGMA journal_mode=WAL")
+        await cursor.fetchall()
 
         await self._db.execute("""
             CREATE TABLE IF NOT EXISTS semantic_cache (

@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block nav_cache %}active{% endblock %}
+{% block page_title %}Semantic Cache{% endblock %}
+{% block content %}
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-label">Total Entries</div>
+    <div class="stat-value">{{ cache_stats.total_entries }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Valid Entries</div>
+    <div class="stat-value">{{ cache_stats.valid_entries }}</div>
+  </div>
+</div>
+{% endblock %}
+{% block body_class %}dashboard-page{% endblock %}

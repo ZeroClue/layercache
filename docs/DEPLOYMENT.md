@@ -71,7 +71,7 @@ docker-compose up -d
 
 ```bash
 curl http://localhost:8000/health
-# {"status":"healthy","version":"1.0.0","semantic_cache":true}
+# {"status":"healthy","version":"1.4.0","semantic_cache":true}
 
 curl http://localhost:8000/v1/cache/metrics
 # {"llm_requests_total":0,"provider_token_cache_hit_rate":0,...}
@@ -97,7 +97,7 @@ client = OpenAI(
 ### Build the Image
 
 ```bash
-docker build -t layercache:1.0.0 .
+docker build -t layercache:1.4.0 .
 ```
 
 ### Run
@@ -110,7 +110,7 @@ docker run -d \
   -e OPENAI_API_KEY=sk-... \
   -v ./data:/data \
   -v ./layercache.yaml:/app/layercache.yaml:ro \
-  layercache:1.0.0
+  layercache:1.4.0
 ```
 
 ### Build Arguments
@@ -163,6 +163,13 @@ caching:
     similarity_threshold: 0.95           # Minimum cosine similarity for cache hit
     embedder: "BAAI/bge-small-en-v1.5"  # FastEmbed model name
 
+  metrics:
+    db_path: /data/metrics.db            # Path to metrics SQLite DB
+    snapshot_interval: 60                 # Snapshot interval in seconds (min 30)
+    retention_hours: 24                   # How long to retain snapshots
+
+  max_session_tokens: 2000                # Optional: truncate L2 to keep within this token budget
+
 enhancements:
   registered:
     - name: chain_of_thought
@@ -203,6 +210,7 @@ LayerCache uses the `/data` directory for persistent data. You **must** mount th
 ```
 /data/
 ├── semantic_cache.db         # SQLite database for semantic cache
+├── metrics.db                # SQLite database for metric snapshots
 ├── prompts/                  # Prompt template files (YAML/JSON)
 │   ├── code-assistant.yaml
 │   └── writer.yaml
@@ -241,7 +249,7 @@ Response:
 ```json
 {
   "status": "healthy",
-  "version": "1.0.0",
+  "version": "1.4.0",
   "semantic_cache": true,
   "semantic_cache_stats": {
     "total_entries": 42,
@@ -249,6 +257,19 @@ Response:
   }
 }
 ```
+
+### Web Dashboard
+
+Access the management dashboard at `http://localhost:8000/dashboard`. Provides:
+
+- **Overview**: Request rate, latency, cost savings charts
+- **Models**: Per-model metrics breakdown
+- **Cache**: Semantic cache browser
+- **Templates**: Template CRUD management
+- **Config**: In-browser config editor (hot-reload support)
+- **Logs**: Live streaming log viewer (SSE)
+
+If `proxy_api_key` is configured, the dashboard requires login.
 
 ### Prometheus Metrics
 
@@ -332,7 +353,7 @@ A single LayerCache instance can handle thousands of requests per minute. The SQ
 
 ### Horizontal Scaling (Future)
 
-For high-availability or high-throughput deployments:
+See the [ROADMAP.md](ROADMAP.md) for the full plan. Summary of what changes:
 
 1. **Replace SQLite with Redis** — Point the semantic cache at a Redis instance for shared state
 2. **Externalize the Prompt Registry** — Use a shared volume mount (NFS, S3, Git-synced)
@@ -371,7 +392,7 @@ spec:
     spec:
       containers:
         - name: layercache
-          image: layercache:1.0.0
+          image: layercache:1.4.0
           ports:
             - containerPort: 8000
           env:

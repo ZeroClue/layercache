@@ -19,7 +19,7 @@ CREATE TABLE metric_snapshots (
 );
 ```
 
-WAL journal mode enabled for concurrent reads while the background writer writes.
+WAL journal mode enabled on both `metrics.db` and `semantic_cache.db` for concurrent reads during writes. Currently neither DB uses WAL; enabling it on the cache DB also improves pipeline throughput (cache writes no longer block concurrent pipeline reads).
 
 ### Background snapshot task
 
@@ -100,7 +100,7 @@ Prompt template CRUD wrapping `/v1/prompts/templates` API. Create/edit via form,
 
 ### 5. Configuration (`/dashboard/config`)
 
-Read-only view of current `layercache.yaml` (secrets masked). Banner if file is read-only. Phase 3 will add inline editing with atomic write + mtime conflict check.
+Editable YAML editor with syntax validation, atomic save, and hot-reload. Banner if file is read-only. Save uses tempfile+rename with mtime conflict detection. Hot-reload applies log level, pipeline timeout/retries, and warns on changes requiring restart (semantic cache, enhancements).
 
 ### 6. Logs (`/dashboard/logs`)
 
@@ -157,11 +157,22 @@ layercache/
 12. Config page: YAML display with R/O detection + secrets masking
 13. Logs page: ring buffer tail
 
-### Phase 3: Config editing (future)
+### Phase 3: Config editing ✅
 
-14. Write-back endpoint with atomic write + mtime check
-15. YAML validation before write
-16. SIGHUP reload or hot-reload watcher
+14. Write-back endpoint with atomic write + mtime check ✅
+15. YAML validation before write ✅
+16. Hot-reload via `reload_config()` (log level, pipeline, restart warnings) ✅
+
+### Cleanup Phase: Post-implementation polish ✅
+
+17. Negative sleep guard, WAL checkpoint, backoff cap on snapshot loop
+18. Pricing match: sort by key length descending
+19. `MetricsCollector` threading lock for concurrent safety
+20. CSRF (HTMX header check) + rate limiting on config save endpoint
+21. Dead `_mask_secrets` removed
+22. Config path centralised via `app.state.config_path`
+23. Test coverage: 17 new tests for config reload, save, mtime, CSRF, rate limiting
+24. Documentation: plans, changelog, agents.md, docstrings updated
 
 ## Dependencies
 

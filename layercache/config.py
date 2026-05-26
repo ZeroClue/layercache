@@ -32,10 +32,16 @@ class ProviderConfig(BaseModel):
     timeout: int = 120
 
 
+class AnthropicProviderConfig(ProviderConfig):
+    """Anthropic-specific provider configuration."""
+
+    use_auto_cache_control: bool = False
+
+
 class ProvidersConfig(BaseModel):
     """All provider configurations."""
 
-    anthropic: ProviderConfig | None = None
+    anthropic: AnthropicProviderConfig | None = None
     openai: ProviderConfig | None = None
     gemini: ProviderConfig | None = None
 
@@ -51,10 +57,20 @@ class SemanticCacheConfig(BaseModel):
     embedder: str = "BAAI/bge-small-en-v1.5"
 
 
+class MetricsConfig(BaseModel):
+    """Metrics snapshot storage configuration."""
+
+    db_path: str = "/data/metrics.db"
+    snapshot_interval_seconds: int = Field(default=60, gt=0)
+    snapshot_retention_days: int = Field(default=7, gt=0)
+
+
 class CachingConfig(BaseModel):
     """Caching configuration."""
 
     semantic: SemanticCacheConfig = Field(default_factory=SemanticCacheConfig)
+    metrics: MetricsConfig = Field(default_factory=MetricsConfig)
+    max_session_tokens: int | None = None
 
 
 class EnhancementConfig(BaseModel):

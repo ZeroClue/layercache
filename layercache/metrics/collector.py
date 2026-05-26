@@ -7,6 +7,7 @@ that estimates cost savings from token caching.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Any
 
@@ -63,6 +64,9 @@ class MetricsCollector:
         self._total_cost_saved_usd: float = 0.0
         self._total_cost_usd: float = 0.0
 
+        # Concurrency guard — protects all mutable state above
+        self._lock = threading.Lock()
+
     def record_request(
         self,
         model: str,
@@ -73,98 +77,115 @@ class MetricsCollector:
         duration_seconds: float = 0,
     ) -> None:
         """Record metrics for a single LLM request."""
-        self._llm_requests_total += 1
-        self._total_input_tokens += input_tokens
-        self._total_output_tokens += output_tokens
-        self._total_cache_read_tokens += cache_read_tokens
-        self._total_cache_creation_tokens += cache_creation_tokens
+        with self._lock:
+            self._llm_requests_total += 1
+            self._total_input_tokens += input_tokens
+            self._total_output_tokens += output_tokens
+            self._total_cache_read_tokens += cache_read_tokens
+            self._total_cache_creation_tokens += cache_creation_tokens
 
-        # Per-model tracking
-        self._model_requests[model] = self._model_requests.get(model, 0) + 1
-        self._model_input_tokens[model] = self._model_input_tokens.get(model, 0) + input_tokens
-        self._model_output_tokens[model] = self._model_output_tokens.get(model, 0) + output_tokens
-        self._model_cache_read_tokens[model] = (
-            self._model_cache_read_tokens.get(model, 0) + cache_read_tokens
-        )
+            self._model_requests[model] = self._model_requests.get(model, 0) + 1
+            self._model_input_tokens[model] = (
+                self._model_input_tokens.get(model, 0) + input_tokens
+            )
+            self._model_output_tokens[model] = (
+                self._model_output_tokens.get(model, 0) + output_tokens
+            )
+            self._model_cache_read_tokens[model] = (
+                self._model_cache_read_tokens.get(model, 0) + cache_read_tokens
+            )
 
-        # Token savings: cached tokens would have been billed at full input rate
-        tokens_saved = cache_read_tokens
-        self._total_tokens_saved += tokens_saved
+            tokens_saved = cache_read_tokens
+            self._total_tokens_saved += tokens_saved
 
-        # Cost estimation
-        pricing = self._get_pricing(model)
-        cost_saved = (cache_read_tokens / 1_000_000) * (pricing["input"] - pricing["cache_read"])
-        cost_cached = (cache_read_tokens / 1_000_000) * pricing["cache_read"] + (
-            (input_tokens - cache_read_tokens) / 1_000_000
-        ) * pricing["input"]
-        self._total_cost_saved_usd += cost_saved
-        self._total_cost_usd += cost_cached + (output_tokens / 1_000_000) * pricing["output"]
+            pricing = self._get_pricing(model)
+            cost_saved = (
+                (cache_read_tokens / 1_000_000)
+                * (pricing["input"] - pricing["cache_read"])
+            )
+            cost_cached = (cache_read_tokens / 1_000_000) * pricing["cache_read"] + (
+                (input_tokens - cache_read_tokens) / 1_000_000
+            ) * pricing["input"]
+            self._total_cost_saved_usd += cost_saved
+            self._total_cost_usd += cost_cached + (output_tokens / 1_000_000) * pricing["output"]
 
-        # Latency tracking
-        if duration_seconds > 0:
-            self._request_latencies.append(duration_seconds)
-            if len(self._request_latencies) > self._max_latency_samples:
-                self._request_latencies = self._request_latencies[-self._max_latency_samples :]
+            if duration_seconds > 0:
+                self._request_latencies.append(duration_seconds)
+                if len(self._request_latencies) > self._max_latency_samples:
+                    self._request_latencies = self._request_latencies[-self._max_latency_samples :]
 
     def record_semantic_cache_hit(self) -> None:
         """Record a semantic cache hit (no LLM call needed)."""
-        self._semantic_cache_hits_total += 1
+        with self._lock:
+            self._semantic_cache_hits_total += 1
 
     def record_semantic_cache_miss(self) -> None:
         """Record a semantic cache miss."""
-        self._semantic_cache_misses_total += 1
+        with self._lock:
+            self._semantic_cache_misses_total += 1
 
     def get_metrics(self) -> dict[str, Any]:
         """Get aggregated metrics for the dashboard API."""
-        total_requests = self._llm_requests_total
-        semantic_total = self._semantic_cache_hits_total + self._semantic_cache_misses_total
+        with self._lock:
+            total_requests = self._llm_requests_total
+            hits = self._semantic_cache_hits_total
+            misses = self._semantic_cache_misses_total
+            total_input = self._total_input_tokens
+            total_output = self._total_output_tokens
+            total_cache_read = self._total_cache_read_tokens
+            total_cache_creation = self._total_cache_creation_tokens
+            total_saved = self._total_tokens_saved
+            cost_saved = self._total_cost_saved_usd
+            cost_total = self._total_cost_usd
+            latencies = list(self._request_latencies)
+            model_requests = dict(self._model_requests)
+            model_inputs = dict(self._model_input_tokens)
+            model_cached = dict(self._model_cache_read_tokens)
+
+        semantic_total = hits + misses
 
         provider_hit_rate = (
-            self._total_cache_read_tokens / self._total_input_tokens
-            if self._total_input_tokens > 0
-            else 0.0
+            total_cache_read / total_input if total_input > 0 else 0.0
         )
 
         semantic_hit_rate = (
-            self._semantic_cache_hits_total / semantic_total if semantic_total > 0 else 0.0
+            hits / semantic_total if semantic_total > 0 else 0.0
         )
 
         avg_latency = (
-            sum(self._request_latencies) / len(self._request_latencies)
-            if self._request_latencies
-            else 0.0
+            sum(latencies) / len(latencies) if latencies else 0.0
         )
 
         p95_latency = (
-            self._percentile(self._request_latencies, 95) if self._request_latencies else 0.0
+            self._percentile(latencies, 95) if latencies else 0.0
         )
 
         by_model: dict[str, dict[str, float]] = {}
-        for model in self._model_requests:
-            model_input = self._model_input_tokens.get(model, 0)
-            model_cached = self._model_cache_read_tokens.get(model, 0)
+        for model in model_requests:
+            model_input = model_inputs.get(model, 0)
+            model_cached_val = model_cached.get(model, 0)
             by_model[model] = {
-                "requests": self._model_requests[model],
+                "requests": model_requests[model],
                 "provider_token_cache_hit_rate": (
-                    model_cached / model_input if model_input > 0 else 0.0
+                    model_cached_val / model_input if model_input > 0 else 0.0
                 ),
                 "input_tokens": model_input,
-                "cache_read_tokens": model_cached,
+                "cache_read_tokens": model_cached_val,
             }
 
         return {
             "llm_requests_total": total_requests,
-            "semantic_cache_hits_total": self._semantic_cache_hits_total,
-            "semantic_cache_misses_total": self._semantic_cache_misses_total,
+            "semantic_cache_hits_total": hits,
+            "semantic_cache_misses_total": misses,
             "provider_token_cache_hit_rate": round(provider_hit_rate, 4),
             "semantic_cache_hit_rate": round(semantic_hit_rate, 4),
-            "total_input_tokens": self._total_input_tokens,
-            "total_output_tokens": self._total_output_tokens,
-            "total_cache_read_tokens": self._total_cache_read_tokens,
-            "total_cache_creation_tokens": self._total_cache_creation_tokens,
-            "estimated_tokens_saved": self._total_tokens_saved,
-            "estimated_cost_saved_usd": round(self._total_cost_saved_usd, 4),
-            "estimated_total_cost_usd": round(self._total_cost_usd, 4),
+            "total_input_tokens": total_input,
+            "total_output_tokens": total_output,
+            "total_cache_read_tokens": total_cache_read,
+            "total_cache_creation_tokens": total_cache_creation,
+            "estimated_tokens_saved": total_saved,
+            "estimated_cost_saved_usd": round(cost_saved, 4),
+            "estimated_total_cost_usd": round(cost_total, 4),
             "avg_request_duration_seconds": round(avg_latency, 4),
             "p95_request_duration_seconds": round(p95_latency, 4),
             "by_model": by_model,
@@ -221,16 +242,14 @@ class MetricsCollector:
             model.lower().replace("anthropic/", "").replace("openai/", "").replace("gemini/", "")
         )
 
-        # Direct match
         if model_lower in MODEL_PRICING:
             return MODEL_PRICING[model_lower]
 
-        # Fuzzy match
-        for key, pricing in MODEL_PRICING.items():
+        # Fuzzy match — check longest keys first so specific substrings win
+        for key in sorted(MODEL_PRICING, key=len, reverse=True):
             if key in model_lower or model_lower in key:
-                return pricing
+                return MODEL_PRICING[key]
 
-        # Default pricing (rough average)
         return {"input": 3.0, "output": 15.0, "cache_read": 0.30}
 
     @staticmethod

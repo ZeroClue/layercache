@@ -1,7 +1,7 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.2.0-blue" alt="Version 1.2.0">
+  <img src="https://img.shields.io/badge/version-1.4.0-blue" alt="Version 1.4.0">
   <img src="https://img.shields.io/badge/python-3.11+-green" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-98%20passing-brightgreen" alt="98 Tests Passing">
+  <img src="https://img.shields.io/badge/tests-115%20passing-brightgreen" alt="115 Tests Passing">
   <img src="https://img.shields.io/badge/license-MIT-orange" alt="MIT License">
 </p>
 
@@ -40,9 +40,11 @@ In the background, LayerCache:
 
 1. **Canonicalizes** your prompts for byte-for-byte deterministic output (maximizing prefix cache hits)
 2. **Injects provider-specific cache markers** at stable layer boundaries
-3. **Applies prompt enhancements** (Chain of Thought, few-shot examples, etc.) *without breaking the cache*
-4. **Caches semantically similar queries** to bypass the LLM entirely on repeat requests
-5. **Tracks metrics** — token savings, cost reduction, cache hit rates — via Prometheus
+3. **Truncates long conversations** to fit within a token budget (keeping recent turns, dropping old ones)
+4. **Warns when your prefix is too short** for provider caching to work
+5. **Applies prompt enhancements** (Chain of Thought, few-shot examples, etc.) *without breaking the cache*
+6. **Caches semantically similar queries** to bypass the LLM entirely on repeat requests
+7. **Tracks metrics** — token savings, cost reduction, cache hit rates — via Prometheus and a built-in web dashboard
 
 ## Why LayerCache?
 
@@ -53,6 +55,8 @@ In the background, LayerCache:
 | No visibility into cache performance or cost savings | Built-in Prometheus metrics and JSON dashboard showing hit rates, tokens saved, and $ saved |
 | Different providers have different caching mechanisms | Provider adapters handle Anthropic (ephemeral markers), OpenAI (auto-caching), and Gemini (CachedContent) |
 | Repeated similar queries waste tokens and money | Semantic cache with embedding similarity matching bypasses the LLM for near-duplicate queries |
+| Long conversations grow an unbounded prefix, reducing cache effectiveness | Automatic L2 session truncation keeps only the last N tokens of conversation history |
+| Silent cache misses with no diagnostic | Runtime warning when L0+L1+L2 is below the provider caching threshold (~1024 tokens) |
 
 ## Core Concept: The Layered Prompt Architecture
 
@@ -74,7 +78,7 @@ Cache breakpoints are placed at L0/L1/L2 boundaries. Enhancements are injected a
 - **Prompt Canonicalizer** — Automatic whitespace normalization, JSON minification, tool sorting
 - **Provider Cache Marker Injection** — Anthropic ephemeral markers, OpenAI prefix alignment, Gemini CachedContent
 - **Universal Routing** — LiteLLM-based multi-provider routing with automatic failover
-- **Cache Observability** — Prometheus metrics and JSON dashboard
+- **Cache Observability** — Prometheus metrics, JSON dashboard, and built-in web dashboard (Jinja2 + HTMX + Chart.js)
 
 ### Phase 2: Cache-Safe Enhancements
 - **Enhancement API** — Composable prompt engineering via request metadata
@@ -86,6 +90,10 @@ Cache breakpoints are placed at L0/L1/L2 boundaries. Enhancements are injected a
 - **Local Embeddings** — FastEmbed (BAAI/bge-small-en-v1.5) in ProcessPoolExecutor
 - **Dual-Key Strategy** — Prefix hash (exact) + query embedding (semantic similarity)
 - **Configurable TTLs** — Per-request and default TTLs with automatic cleanup
+
+### Phase 4: Production Polish
+- **L2 Session Truncation** — Automatically drops old conversation turns to keep the cacheable prefix within a token budget
+- **Prefix Threshold Diagnostics** — Info-level warning when L0+L1+L2 is below the ~1024-token caching threshold
 
 ## Quick Start
 
@@ -122,8 +130,10 @@ uvicorn layercache.main:app --host 0.0.0.0 --port 8000
 
 ```bash
 curl http://localhost:8000/health
-# {"status":"healthy","version":"1.2.0","semantic_cache":true}
+# {"status":"healthy","version":"1.4.0","semantic_cache":true}
 ```
+
+Open [http://localhost:8000/dashboard](http://localhost:8000/dashboard) for the web dashboard (config editor, metrics charts, logs, template CRUD).
 
 ## Usage Examples
 
@@ -230,11 +240,27 @@ curl http://localhost:8000/metrics
 |--------|----------|-------------|
 | `GET` | `/health` | Health check |
 | `GET` | `/v1/cache/metrics` | Cache performance metrics (JSON) |
+| `GET` | `/v1/cache/metrics/history` | Bucketed time-series for charting |
+| `GET` | `/v1/cache/metrics/status` | Snapshot age tracking |
 | `GET` | `/metrics` | Prometheus metrics (text/plain) |
 | `GET` | `/v1/prompts/templates` | List prompt templates |
 | `POST` | `/v1/prompts/templates` | Create/update a template |
 | `DELETE` | `/v1/prompts/templates/{name}` | Delete a template |
 | `POST` | `/v1/prompts/reload` | Reload templates from disk |
+
+### Dashboard Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/dashboard` | Overview with stat cards + charts |
+| `GET` | `/dashboard/models` | Provider/model table |
+| `GET` | `/dashboard/cache` | Semantic cache stats + invalidation |
+| `GET` | `/dashboard/templates` | Prompt template CRUD |
+| `GET` | `/dashboard/config` | YAML config editor |
+| `POST` | `/dashboard/config/save` | Save config (HTMX, CSRF-protected) |
+| `GET` | `/dashboard/logs` | Log tail from ring buffer |
+| `GET` | `/dashboard/login` | Login form (when proxy key is set) |
+| `POST` | `/dashboard/login` | Login action |
 
 ### LayerCache Request Extensions
 
@@ -275,6 +301,7 @@ caching:
     default_ttl: 300              # 5 minutes
     similarity_threshold: 0.95    # Cosine similarity for semantic cache
     embedder: "BAAI/bge-small-en-v1.5"
+  max_session_tokens: 2000        # Optional: truncate L2 to keep within token budget
 
 enhancements:
   registered:
@@ -328,6 +355,8 @@ Client Application
 │  │  1. Semantic Cache Lookup     │  │
 │  │  2. Stratify (L0→L4)          │  │
 │  │  3. Canonicalize              │  │
+│  │  3b. Truncate Session        │  │
+│  │  3c. Prefix Threshold Check  │  │
 │  │  4. Enhance (L3 injection)    │  │
 │  │  5. Inject Cache Markers      │  │
 │  │  6. Route via LiteLLM         │  │
@@ -422,7 +451,7 @@ layercache/
 │   │   └── collector.py          # Prometheus + ROI tracking
 │   └── registry/                 # Prompt template management
 │       └── prompt_registry.py    # YAML/JSON template loader
-├── tests/                        # Test suite (98 tests)
+├── tests/                        # Test suite (115 tests)
 ├── data/                         # Sample data
 │   ├── prompts/                  # Prompt templates
 │   └── few_shots/                # Few-shot examples
@@ -449,6 +478,7 @@ layercache/
 | [TDD](docs/TDD.md) | Technical Design Document |
 | [Implementation Plan](docs/IMPLEMENTATION_PLAN.md) | 8-sprint development roadmap |
 | [Architecture](docs/ARCHITECTURE.md) | System architecture deep-dive |
+| [Roadmap](docs/ROADMAP.md) | Prioritized future development plan |
 | [Deployment Guide](docs/DEPLOYMENT.md) | Production deployment instructions |
 | [User Guide](docs/USER_GUIDE.md) | Comprehensive usage guide |
 | [API Reference](docs/API.md) | Full API documentation |

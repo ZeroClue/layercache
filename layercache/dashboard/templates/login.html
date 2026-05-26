@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LayerCache — Login</title>
+<link rel="stylesheet" href="/static/dashboard.css">
+</head>
+<body class="login-page">
+<div class="login-container">
+  <h1>LayerCache</h1>
+  <p class="login-subtitle">Dashboard authentication</p>
+  {% if error %}
+  <div class="alert alert-error">{{ error }}</div>
+  {% endif %}
+  <form method="POST" action="/dashboard/login" class="login-form">
+    <label for="api_key">Proxy API Key</label>
+    <input type="password" name="api_key" id="api_key" required autofocus>
+    <button type="submit">Sign in</button>
+  </form>
+</div>
+</body>
+</html>

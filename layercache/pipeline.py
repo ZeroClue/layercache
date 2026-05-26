@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -24,7 +25,7 @@ from .cache.semantic import SemanticCache
 from .canonicalizer import Canonicalizer
 from .enhancements.base import EnhancementRegistry
 from .metrics.collector import MetricsCollector, RequestTimer
-from .models import LayerCacheRequest, StratifiedPrompt
+from .models import LayerCacheRequest, LayerType, StratifiedMessage, StratifiedPrompt
 from .registry.prompt_registry import PromptRegistry
 from .stratifier import Stratifier
 
@@ -74,6 +75,7 @@ class RequestPipeline:
         metrics: MetricsCollector,
         timeout: int = 120,
         max_retries: int = 3,
+        max_session_tokens: int | None = None,
     ) -> None:
         self.stratifier = stratifier
         self.canonicalizer = canonicalizer
@@ -83,6 +85,147 @@ class RequestPipeline:
         self.metrics = metrics
         self._timeout = timeout
         self._max_retries = max_retries
+        self._max_session_tokens = max_session_tokens
+
+        # P2: throttled prefix-hash warning set
+        self._prefix_warning_throttle: dict[str, float] = {}
+        self._prefix_warning_throttle_max = 10000
+
+    # ------------------------------------------------------------------
+    # P3: Session truncation
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _split_turns(
+        messages: list[StratifiedMessage],
+    ) -> list[list[StratifiedMessage]]:
+        """Split session messages into turn groups. A turn starts with a user message."""
+        turns: list[list[StratifiedMessage]] = []
+        current: list[StratifiedMessage] = []
+        for m in messages:
+            if m.role == "user" and current:
+                turns.append(current)
+                current = []
+            current.append(m)
+        if current:
+            turns.append(current)
+        return turns
+
+    def _truncate_session(
+        self,
+        prompt: StratifiedPrompt,
+        model: str,
+    ) -> None:
+        """Truncate L2 to fit within max_session_tokens.
+
+        Splits session messages into turn groups (user→assistant/tool sequences)
+        and drops the oldest groups until the remaining fit within budget.
+        At least one turn is always preserved, even if it exceeds the budget.
+        Logs at INFO when truncation occurs.
+        """
+        max_tokens = self._max_session_tokens
+        if max_tokens is None or max_tokens <= 0:
+            return
+
+        session_msgs = prompt.layers.get(LayerType.SESSION, [])
+        if not session_msgs:
+            return
+
+        import litellm
+
+        def _count(content: str) -> int:
+            try:
+                result = litellm.token_counter(model=model, text=content)
+                return int(result) if result is not None else len(content) // 2
+            except Exception:
+                return len(content) // 2
+
+        turns = self._split_turns(session_msgs)
+        if len(turns) <= 1:
+            return  # single turn, nothing to truncate
+
+        # Work backwards: keep trailing turns until budget is breached
+        kept_turns: list[list[StratifiedMessage]] = []
+        total_tokens = 0
+        for turn in reversed(turns):
+            turn_tokens = sum(_count(str(m.content)) for m in turn)
+            if total_tokens + turn_tokens > max_tokens and kept_turns:
+                break
+            kept_turns.insert(0, turn)
+            total_tokens += turn_tokens
+
+        # Flatten
+        kept: list[StratifiedMessage] = []
+        for t in kept_turns:
+            kept.extend(t)
+
+        if len(kept) != len(session_msgs):
+            prompt.layers[LayerType.SESSION] = kept
+            logger.info(
+                "Truncated L2 from %d to %d messages (%d turns, ~%d tokens) for model=%s. "
+                "Provider prefix caching enabled; semantic cache will miss for this conversation.",
+                len(session_msgs),
+                len(kept),
+                len(kept_turns),
+                total_tokens,
+                model,
+            )
+
+    # ------------------------------------------------------------------
+    # P2: Prefix threshold warning
+    # ------------------------------------------------------------------
+
+    def _check_prefix_threshold(
+        self,
+        prompt: StratifiedPrompt,
+        model: str,
+    ) -> None:
+        """Emit an INFO log if the stable prefix (L0+L1+L2) is below the
+        provider caching threshold (~1024 tokens). Rate-limited to once per
+        prefix hash per hour.
+
+        This is a read-only diagnostic — no behavior change.
+        """
+        prefix_hash = prompt.prefix_hash()
+        now = time.time()
+        last_warn = self._prefix_warning_throttle.get(prefix_hash, 0.0)
+        if now - last_warn < 3600:
+            return  # already warned within the hour
+
+        import litellm
+
+        parts: list[str] = []
+        for layer_type in (LayerType.SYSTEM, LayerType.CONTEXT, LayerType.SESSION):
+            for msg in sorted(
+                prompt.layers[layer_type], key=lambda m: m.content_hash()
+            ):
+                content = msg.content if isinstance(msg.content, str) else str(msg.content)
+                parts.append(content)
+        prefix_text = "\n".join(parts)
+        if not prefix_text.strip():
+            return
+
+        try:
+            raw = litellm.token_counter(model=model, text=prefix_text)
+            estimated = int(raw) if raw is not None else len(prefix_text) // 2
+        except Exception:
+            estimated = len(prefix_text) // 2  # CJK-safe fallback (~2 chars/token)
+
+        if estimated < 1024:
+            self._prefix_warning_throttle[prefix_hash] = now
+            if len(self._prefix_warning_throttle) > self._prefix_warning_throttle_max:
+                cutoff = now - 7200
+                for k in list(self._prefix_warning_throttle):
+                    if self._prefix_warning_throttle[k] < cutoff:
+                        del self._prefix_warning_throttle[k]
+            logger.info(
+                "Stable prefix (L0+L1+L2) ~%d tokens (model=%s) — below ~1024 token "
+                "caching threshold. Add more content to L0/L1 or expect low cache hit rates.",
+                estimated,
+                model,
+            )
+
+    # ------------------------------------------------------------------
 
     async def process_request(
         self,
@@ -141,6 +284,12 @@ class RequestPipeline:
 
             # Stage 3: Canonicalization
             prompt, canonical_tools = self.canonicalizer.canonicalize(prompt, request.tools)
+
+            # Stage 3b: Session truncation (P3)
+            self._truncate_session(prompt, request.model)
+
+            # Stage 3c: Prefix threshold warning (P2)
+            self._check_prefix_threshold(prompt, request.model)
 
             # Stage 4: Enhancement Injection (L3 only)
             if request.lc_enhancements:
@@ -259,6 +408,9 @@ class RequestPipeline:
                 layer_hints=request.lc_layer_hints,
             )
             prompt, canonical_tools = self.canonicalizer.canonicalize(prompt, request.tools)
+
+            self._truncate_session(prompt, request.model)
+            self._check_prefix_threshold(prompt, request.model)
 
             if request.lc_enhancements:
                 await self._apply_enhancements(prompt, request)
