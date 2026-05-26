@@ -79,6 +79,9 @@ Cache breakpoints are placed at L0/L1/L2 boundaries. Enhancements are injected a
 - **Provider Cache Marker Injection** — Anthropic ephemeral markers, OpenAI prefix alignment, Gemini CachedContent
 - **Universal Routing** — LiteLLM-based multi-provider routing with automatic failover
 - **Cache Observability** — Prometheus metrics, JSON dashboard, and built-in web dashboard (Jinja2 + HTMX + Chart.js)
+- **Persistent Metrics** — Time-series metric snapshots in SQLite with background collection loop
+- **Web Dashboard** — Overview charts, per-model breakdown, cache browser, config editor with hot-reload, live log viewer
+- **Config Hot-Reload** — Update log level, pipeline timeout/retries at runtime without restart
 
 ### Phase 2: Cache-Safe Enhancements
 - **Enhancement API** — Composable prompt engineering via request metadata
@@ -302,6 +305,10 @@ caching:
     similarity_threshold: 0.95    # Cosine similarity for semantic cache
     embedder: "BAAI/bge-small-en-v1.5"
   max_session_tokens: 2000        # Optional: truncate L2 to keep within token budget
+  metrics:
+    db_path: /data/metrics.db     # Time-series snapshot storage
+    snapshot_interval_seconds: 60  # Background snapshot interval
+    snapshot_retention_days: 7     # Snapshot retention
 
 enhancements:
   registered:
@@ -447,8 +454,13 @@ layercache/
 │   ├── cache/                    # Semantic caching
 │   │   ├── semantic.py           # SQLite-backed cache
 │   │   └── embedder.py           # FastEmbed wrapper
+│   ├── dashboard/                # Web dashboard (Jinja2 + HTMX)
+│   │   ├── router.py             # Dashboard routes
+│   │   └── templates/            # Jinja2 templates
 │   ├── metrics/                  # Observability
-│   │   └── collector.py          # Prometheus + ROI tracking
+│   │   ├── collector.py          # Prometheus + ROI tracking
+│   │   └── storage.py            # Persistent time-series snapshots
+│   ├── static/                   # Dashboard assets
 │   └── registry/                 # Prompt template management
 │       └── prompt_registry.py    # YAML/JSON template loader
 ├── tests/                        # Test suite (115 tests)
