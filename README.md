@@ -2,6 +2,7 @@
   <img src="https://img.shields.io/badge/version-1.4.0-blue" alt="Version 1.4.0">
   <img src="https://img.shields.io/badge/python-3.11+-green" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/tests-117%20passing-brightgreen" alt="117 Tests Passing">
+  <img src="https://img.shields.io/github/actions/workflow/status/ZeroClue/layercache/ci.yml?branch=main" alt="CI">
   <img src="https://img.shields.io/badge/license-MIT-orange" alt="MIT License">
 </p>
 
