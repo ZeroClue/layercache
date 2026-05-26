@@ -1,0 +1,32 @@
+# Auto-detect text files and normalize line endings
+* text=auto
+
+# Python
+*.py text diff=python
+*.pyi text diff=python
+*.pyw text
+
+# Markdown / docs
+*.md text
+*.rst text
+*.txt text
+
+# Config
+*.yml text
+*.yaml text
+*.json text
+*.toml text
+*.cfg text
+*.ini text
+
+# Shell scripts
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Generated — merge driver keeps the file as-is
+layercache.schema.json -text merge=ours linguist-generated=true
+
+# Binary / vendored
+layercache/static/vendor/* binary
+*.png binary
+*.ico binary

@@ -976,7 +976,6 @@ wheels = [
 
 [[package]]
 name = "layercache"
-version = "1.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },

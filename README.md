@@ -531,6 +531,7 @@ layercache/
 | [Deployment Guide](docs/DEPLOYMENT.md) | Production deployment instructions |
 | [User Guide](docs/USER_GUIDE.md) | Comprehensive usage guide |
 | [API Reference](docs/API.md) | Full API documentation |
+| [Contributing](CONTRIBUTING.md) | How to contribute, setup, and PR process |
 | [CHANGELOG](CHANGELOG.md) | Version history and changes |
 
 ## License
