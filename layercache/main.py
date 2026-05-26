@@ -503,14 +503,43 @@ async def _handle_anthropic_stream(
 async def list_models(
     authorization: str | None = Header(None),
 ) -> JSONResponse:
-    """List available models (proxied to LiteLLM)."""
+    """List available models grouped by provider."""
     await _verify_proxy_key(authorization)
+
     try:
-        models = await litellm.model_list()
-        return JSONResponse(content=models)
+        # Group LiteLLM's known models by provider
+        by_provider: dict[str, list[str]] = {}
+        for provider, models in litellm.models_by_provider.items():
+            by_provider[provider] = sorted(models)
+
+        return JSONResponse(
+            content={
+                "configured_providers": _list_configured_providers(),
+                "by_provider": by_provider,
+                "total_models": len(litellm.model_list),
+            }
+        )
     except Exception as e:
         logger.error("Failed to list models: %s", e)
         raise HTTPException(status_code=500, detail="Failed to list models")
+
+
+def _list_configured_providers() -> list[dict[str, str]]:
+    """List providers that are configured in layercache.yaml."""
+    if not _settings:
+        return []
+    configured: list[dict[str, str]] = []
+    for name, cfg in [
+        ("anthropic", _settings.providers.anthropic),
+        ("openai", _settings.providers.openai),
+        ("gemini", _settings.providers.gemini),
+    ]:
+        if cfg:
+            key_set = bool(os.environ.get(cfg.api_key_env)) if cfg.api_key_env else False
+            configured.append(
+                {"name": name, "api_key_env": cfg.api_key_env or "", "key_set": key_set}
+            )
+    return configured
 
 
 # --- Cache Metrics Endpoints ---
