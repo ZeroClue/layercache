@@ -14,22 +14,6 @@ LayerCache's evolution follows three phases:
 
 ---
 
-## Completed
-
-These were originally future items that have been shipped.
-
-| Item | Shipped In |
-|------|-----------|
-| Web-based metrics dashboard (Jinja2 + HTMX + Chart.js) | 1.2.0 |
-| Config editor with atomic save + hot-reload | 1.3.0 |
-| Persistent metrics DB with time-series snapshots | 1.2.0 |
-| CSRF protection + rate limiting on config save | 1.3.0 |
-| MetricsCollector thread-safety | 1.3.0 |
-| L2 session truncation (`max_session_tokens`) | 1.4.0 |
-| Prefix threshold diagnostic warning | 1.4.0 |
-
----
-
 ## Near-term (V2)
 
 ### P0 — Core distributed infrastructure
@@ -51,8 +35,9 @@ These were originally future items that have been shipped.
 
 | Item | Dependencies | Notes |
 |------|-------------|-------|
-| **WebSocket support** | None | Persistent reverse-proxied connections for streaming use cases that need low-latencey bidirectional transport. |
+| **WebSocket support** | None | Persistent reverse-proxied connections for streaming use cases that need low-latency bidirectional transport. |
 | **Client-level rate limiting** | None | Per-API-key or per-IP quotas enforced at the proxy layer. |
+| **Anthropic auto cache_control** | Adapter interface | Automatically inject `cache_control` on system and historical messages instead of relying on layer-based manual placement. Requires LiteLLM passthrough verification; design spec exists at `docs/designs/P1-anthropic-auto-cache-control.spec.md`. |
 
 ---
 
