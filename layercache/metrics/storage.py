@@ -28,6 +28,7 @@ class MetricsDB:
         """Open connection, enable WAL, create table."""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._db = await aiosqlite.connect(self.db_path)
+        self._db.row_factory = aiosqlite.Row
         try:
             cursor = await self._db.execute("PRAGMA journal_mode=WAL")
             await cursor.fetchall()

@@ -138,6 +138,24 @@ curl http://localhost:8000/health
 
 Open [http://localhost:8000/dashboard](http://localhost:8000/dashboard) for the web dashboard (config editor, metrics charts, logs, template CRUD).
 
+<p align="center">
+  <img src="docs/images/dashboard_overview.png" alt="Dashboard Overview" width="600">
+  <br>
+  <em>Dashboard overview with live metrics</em>
+</p>
+
+<p align="center">
+  <img src="docs/images/dashboard_models.png" alt="Dashboard Models" width="600">
+  <br>
+  <em>Per-model breakdown</em>
+</p>
+
+<p align="center">
+  <img src="docs/images/dashboard_config.png" alt="Dashboard Config" width="600">
+  <br>
+  <em>In-browser config editor</em>
+</p>
+
 ## Usage Examples
 
 ### Basic Proxy (Zero Configuration)
