@@ -494,4 +494,6 @@ This project is licensed under the **MIT License**. See [LICENSE](LICENSE) for t
 - ✅ You must include a copy of the license and copyright notice
 - ⚠️  The software is provided "as-is" without warranty
 
+**Third-party code**: Vendored libraries (Chart.js, HTMX) are included under their own licenses in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 For more information, visit https://opensource.org/licenses/MIT
