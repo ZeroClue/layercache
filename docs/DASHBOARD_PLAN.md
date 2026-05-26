@@ -1,102 +1,114 @@
-# Built-in Web Dashboard — Plan
+# Built-in Web Dashboard — Plan v2
 
-## Goals
+## Data storage: the key gap
 
-A FastAPI-served web UI at `/dashboard` for managing LayerCache and viewing real-time performance. No separate server, no Node.js build step — just Python.
+Current metrics are purely in-memory (`MetricsCollector`). They reset to zero on every restart. A dashboard with time-series charts ("last 24h", "last 7 days") needs persistent storage.
 
-## Architecture
+### Option A: SQLite snapshots (recommended)
 
-- **Server**: Jinja2 templates rendered by FastAPI (already has Jinja2 as a Starlette dependency)
-- **Frontend**: Minimal HTML + HTMX for interactivity + Chart.js for live charts
-- **Data**: Reads from in-memory `MetricsCollector` + hit the existing REST APIs (`/v1/cache/metrics`, `/v1/models`, `/v1/prompts/templates`)
-- **Polling**: HTMX `hx-trigger` with `every:5s` for live updates
+- SQLite is already a dependency (aiosqlite for semantic cache)
+- No new infra, works identically in Docker and bare-metal
+- Background asyncio task snapshots current metrics every 60s
+- API endpoint returns time-bucketed data for charting
+- Auto-prune data older than configurable retention (default 7 days)
 
-## Pages
+**New table in the existing SQLite DB:**
+```sql
+CREATE TABLE metric_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts INTEGER NOT NULL,              -- unix epoch seconds
+    name TEXT NOT NULL,                -- metric name
+    value REAL NOT NULL,
+    labels TEXT DEFAULT '{}',          -- JSON, e.g. {"model": "claude-..."}
+    UNIQUE(ts, name, labels)
+);
 
-### 1. Overview (`/dashboard`)
-
-| Widget | Source |
-|--------|--------|
-| Request rate (sparkline) | `lc_llm_requests_total` rate over time |
-| Semantic cache hit rate % | `hits / (hits + misses)` |
-| Tokens saved (cumulative) | `estimated_tokens_saved` |
-| Cost saved (USD) | `estimated_cost_saved_usd` |
-| Provider cache hit rate | `provider_token_cache_hit_rate` |
-| Avg/P95 latency | `avg/p95_request_duration_seconds` |
-
-Charts: 7-day line chart for request rate, cache hit rate, token usage.
-
-### 2. Models (`/dashboard/models`)
-
-Table of all known providers with:
-- Provider name, model count
-- API key configured? (yes/no)
-- Link to view per-provider model list
-
-### 3. Cache (`/dashboard/cache`)
-
-Semantic cache management:
-- Stats (total entries, valid entries)
-- Search/invalidate by prefix hash
-- TTL configuration display
-
-### 4. Templates (`/dashboard/templates`)
-
-Prompt template CRUD (wraps existing `/v1/prompts/templates` API):
-- List templates
-- Create/edit via form
-- Delete with confirmation
-- Reload from disk button
-
-### 5. Configuration (`/dashboard/config`)
-
-Read-only view of current `layercache.yaml` (sensitive keys masked).
-Future: inline editing with validation.
-
-### 6. Logs (`/dashboard/logs`)
-
-Tail of recent log entries (last N lines from a ring buffer).
-
-## Files to create
-
-```
-layercache/dashboard/
-  __init__.py          # router registration
-  router.py            # /dashboard routes (HTML responses)
-  templates/
-    base.html          # layout with nav sidebar
-    overview.html      # main metrics
-    models.html        # provider/model browser
-    cache.html         # cache management
-    templates.html     # prompt template CRUD
-    config.html        # config viewer
-    logs.html          # live log tail
-static/
-  dashboard.css        # minimal styles
-  dashboard.js         # Chart.js init + HTMX extensions
+CREATE INDEX idx_snapshots_ts ON metric_snapshots(ts);
 ```
 
-## Implementation order
+**Snapshot schema** (one row per counter + current running values):
+| Metric | Example |
+|--------|---------|
+| `llm_requests_total` | 1250 |
+| `semantic_cache_hits_total` | 180 |
+| `semantic_cache_misses_total` | 1070 |
+| `tokens_input_total` | 1250000 |
+| `tokens_output_total` | 625000 |
+| `tokens_cache_read_total` | 815000 |
+| `cost_saved_usd` | 21.72 |
+| `latency_avg_seconds` | 1.234 |
+| `latency_p95_seconds` | 3.456 |
+| `cache_hit_rate` | 0.65 |
 
-1. **Router + base template** — sidebar nav, auth wrapper, page skeleton
-2. **Overview page** — 6 stat cards + Chart.js time-series charts
-3. **Models page** — table from `/v1/models` endpoint
-4. **Templates page** — CRUD forms wrapping existing API
-5. **Cache page** — stats + search/invalidate
-6. **Config page** — YAML display with secret masking
-7. **Logs page** — ring buffer tail (requires new backend stream)
+Per-model snapshots use the `labels` column: `{"model": "anthropic/claude-3-5-sonnet-20241022"}`.
 
-## Dependencies added
+**New API endpoints:**
+- `GET /v1/cache/metrics/history?range=24h&resolution=5m` — returns bucketed time-series
 
-None new — Jinja2, HTMX (CDN), Chart.js (CDN). No build step.
+**Background task:**
+- `asyncio.create_task` during lifespan, coroutine sleeps 60s between snapshots
+- Uses existing `MetricsCollector.get_metrics()` for the snapshot values
+- Prunes rows older than `snapshot_retention_days` (configurable, default 7)
 
-## Effort estimate
+### Option B: Prometheus-only
 
-- Router + base template: ~2h
-- Overview page: ~3h
-- Models page: ~1h
-- Templates page: ~2h
-- Cache page: ~1h
-- Config page: ~1h
-- Logs page: ~2h (new backend ring buffer)
-- **Total: ~12h**
+Skip the SQLite snapshots. The built-in dashboard queries Prometheus directly via its HTTP API. This requires Prometheus to be running (no bare-metal dashboard) but gives you real PromQL power.
+
+**Decision**: Go with Option A (SQLite) as the default. Option B is complementary — the Grafana sidecar already handles the Prometheus path. SQLite makes the dashboard work for everyone.
+
+---
+
+## Implementation order (updated)
+
+### Phase 1: Storage backend (~4h)
+
+1. Add `metric_snapshots` table to semantic cache DB initialization
+2. Add `_snapshot_metrics()` background task to lifespan
+3. Add `GET /v1/cache/metrics/history` endpoint with time bucketing
+4. Add `snapshot_retention_days` to config
+
+### Phase 2: Dashboard UI (~12h)
+
+5. **Router + base template** — sidebar nav, auth wrapper, page skeleton
+6. **Overview page** — stat cards + Chart.js time-series (reads from history endpoint)
+7. **Models page** — table from `/v1/models`
+8. **Templates page** — CRUD forms wrapping existing API
+9. **Cache page** — stats + search/invalidate from semantic cache API
+10. **Config page** — read-only YAML display with secrets masked
+11. **Logs page** — ring buffer tail (requires new backend stream)
+
+### Phase 3: Config editing (future)
+
+12. Write-back support for `layercache.yaml` — mutation endpoint + validation
+13. Apply config changes without full restart (signal-based reload)
+
+---
+
+## Files to create/modify
+
+```
+layercache/
+  metrics/
+    collector.py       # + snapshot_to_db(), get_history()
+    storage.py         # NEW: metric_snapshots table CRUD
+  dashboard/
+    __init__.py
+    router.py
+    templates/
+      base.html
+      overview.html
+      models.html
+      cache.html
+      templates.html
+      config.html
+      logs.html
+  config.py            # + snapshot_retention_days field
+  main.py              # + lifespan background task, /history route
+  static/
+    dashboard.css
+    dashboard.js
+```
+
+## Dependencies
+
+No new Python packages — aiosqlite, Jinja2 already available. HTMX + Chart.js loaded from CDN in the HTML.
