@@ -21,7 +21,8 @@ pytest tests/ -v
 Run both before committing:
 
 ```bash
-ruff check layercache/ ruff format layercache/ --check
+ruff check layercache/
+ruff format layercache/ --check
 mypy layercache/
 ```
 

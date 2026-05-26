@@ -25,6 +25,7 @@
 
 # Generated — merge driver keeps the file as-is
 layercache.schema.json -text merge=ours linguist-generated=true
+uv.lock -text linguist-generated=true
 
 # Binary / vendored
 layercache/static/vendor/* binary
