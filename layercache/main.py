@@ -29,6 +29,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.staticfiles import StaticFiles
 
+from . import __version__ as _package_version
 from .adapters import detect_provider
 from .adapters.anthropic_messages import (
     AnthropicStreamTranslator,
@@ -369,7 +370,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="LayerCache",
     description="Intelligent Prompt Enhancement & Token Caching Proxy",
-    version="1.4.0",
+    version=_package_version,
     lifespan=lifespan,
 )
 
