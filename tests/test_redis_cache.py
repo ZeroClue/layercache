@@ -105,7 +105,8 @@ class TestRedisSemanticCache:
                 
                 # Verify store was called and returns a string (mock returns empty string)
                 assert isinstance(entry_id, str)
-                assert mock_redis.pipeline.called
+                # Verify pipeline was called on the mock redis instance
+                assert cache._redis.pipeline.called
 
     @pytest.mark.asyncio
     async def test_stats(self, mock_redis, mock_pool):
