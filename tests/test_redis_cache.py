@@ -96,7 +96,7 @@ class TestRedisSemanticCache:
         pipeline_mock.set = AsyncMock()
         pipeline_mock.zadd = AsyncMock()
         pipeline_mock.expire = AsyncMock()
-        pipeline_mock.execute = AsyncMock()
+        pipeline_mock.execute = AsyncMock(return_value=["test-entry-id"])
         mock_redis.pipeline.return_value = pipeline_mock
         
         with patch("redis.asyncio.ConnectionPool.from_url", return_value=mock_pool):
@@ -183,10 +183,12 @@ class TestCacheFactory:
                 mock_sqlite_cache.return_value = mock_instance
                 mock_instance.initialize = AsyncMock()
                 
-                result = await get_cache_backend(config)
-                
-                mock_sqlite_cache.assert_called_once()
-                assert result == mock_instance
+                with patch("layercache.cache.factory.logger") as mock_logger:
+                    result = await get_cache_backend(config)
+                    
+                    mock_sqlite_cache.assert_called_once()
+                    assert result == mock_instance
+                    assert mock_logger.warning.called
 
 
 class TestSessionIsolation:
