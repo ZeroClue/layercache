@@ -166,17 +166,19 @@ class TestCacheFactory:
         )
         
         with patch("layercache.cache.factory.RedisSemanticCache") as mock_redis_cache:
-            mock_redis_cache.side_effect = Exception("Redis connection failed")
+            mock_instance = AsyncMock()
+            mock_instance.initialize = AsyncMock(side_effect=Exception("Redis connection failed"))
+            mock_redis_cache.return_value = mock_instance
             
             with patch("layercache.cache.factory.SemanticCache") as mock_sqlite_cache:
-                mock_instance = AsyncMock()
-                mock_sqlite_cache.return_value = mock_instance
-                mock_instance.initialize = AsyncMock()
+                mock_sqlite_instance = AsyncMock()
+                mock_sqlite_cache.return_value = mock_sqlite_instance
+                mock_sqlite_instance.initialize = AsyncMock()
                 
                 result = await get_cache_backend(config)
                 
                 mock_sqlite_cache.assert_called_once()
-                assert result == mock_instance
+                assert result == mock_sqlite_instance
 
 
 class TestSessionIsolation:
