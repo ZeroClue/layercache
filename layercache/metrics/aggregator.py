@@ -432,6 +432,7 @@ class MetricsAggregator:
     def _next_hour(hour: str) -> str:
         """Get next hour from ISO hour string."""
         from datetime import timedelta
+
         dt = datetime.fromisoformat(hour.replace("Z", "+00:00"))
         next_dt = dt.replace(tzinfo=UTC) + timedelta(hours=1)
         return next_dt.strftime("%Y-%m-%dT%H:00:00")

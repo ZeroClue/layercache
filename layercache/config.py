@@ -103,12 +103,8 @@ class SemanticCacheConfig(BaseModel):
         default="redis://localhost:6379/0",
         description="Redis connection URL (used when backend=redis)",
     )
-    redis_pool_size: int = Field(
-        default=10, ge=1, le=100, description="Redis connection pool size"
-    )
-    redis_timeout: float = Field(
-        default=5.0, gt=0, description="Redis socket timeout in seconds"
-    )
+    redis_pool_size: int = Field(default=10, ge=1, le=100, description="Redis connection pool size")
+    redis_timeout: float = Field(default=5.0, gt=0, description="Redis socket timeout in seconds")
     default_ttl: int = Field(
         default=3600, ge=0, description="Default TTL in seconds (0 = no expiry)"
     )

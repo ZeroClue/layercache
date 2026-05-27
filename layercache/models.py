@@ -126,11 +126,11 @@ class StratifiedPrompt(BaseModel):
 
         stable_layers = [LayerType.SYSTEM, LayerType.CONTEXT, LayerType.SESSION]
         prefix_content: list[str] = []
-        
+
         # Include session_id in hash if set (for session isolation)
         if self.session_id:
             prefix_content.append(f"_session:{self.session_id}")
-        
+
         for lt in stable_layers:
             for msg in sorted(self.layers[lt], key=lambda m: m.content_hash()):
                 content_str = (

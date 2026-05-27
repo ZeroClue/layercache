@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 def _sanitize_session_id(session_id: str) -> str:
     """Remove non-alphanumeric chars except dash from session ID."""
-    return re.sub(r'[^a-zA-Z0-9-]', '', session_id) or 'default'
+    return re.sub(r"[^a-zA-Z0-9-]", "", session_id) or "default"
 
 
 def cosine_similarity(a: list[float], b: list[float]) -> float:
@@ -73,11 +73,16 @@ class RedisSemanticCache:
                 decode_responses=False,
             )
             self._redis = redis.Redis(connection_pool=self._pool)
-            
+
             # Health check with explicit timeout
             import asyncio
+
             await asyncio.wait_for(self._redis.ping(), timeout=2.0)
-            logger.info("Redis cache initialized at %s (pool_size=%d)", self.redis_url, self._pool_size)
+            logger.info(
+                "Redis cache initialized at %s (pool_size=%d)",
+                self.redis_url,
+                self._pool_size,
+            )
         except Exception as e:
             logger.error("Failed to initialize Redis cache: %s", e)
             raise
@@ -133,10 +138,10 @@ class RedisSemanticCache:
         # Get all cache entries for this prefix hash (sorted by created_at DESC)
         index_key = self._make_index_key(prefix_hash)
         now = time.time()
-        
+
         # Get entries from sorted set (score = created_at, descending)
         entry_ids = await self._redis.zrevrange(index_key, 0, -1, withscores=True)
-        
+
         if not entry_ids:
             logger.debug("Semantic cache MISS (prefix=%s...) - no entries", prefix_hash[:12])
             return None
@@ -145,8 +150,10 @@ class RedisSemanticCache:
         best_similarity = 0.0
 
         for entry_id_bytes, created_at in entry_ids:
-            entry_id = entry_id_bytes.decode() if isinstance(entry_id_bytes, bytes) else entry_id_bytes
-            
+            entry_id = (
+                entry_id_bytes.decode() if isinstance(entry_id_bytes, bytes) else entry_id_bytes
+            )
+
             # Check TTL
             ttl_key = f"layercache:ttl:{entry_id}"
             ttl_expires = await self._redis.get(ttl_key)
@@ -279,10 +286,14 @@ class RedisSemanticCache:
             # Delete all entries for this prefix hash
             index_key = self._make_index_key(prefix_hash)
             entry_ids = await self._redis.zrange(index_key, 0, -1)
-            
+
             async with self._redis.pipeline(transaction=True) as pipe:
                 for entry_id_bytes in entry_ids:
-                    entry_id = entry_id_bytes.decode() if isinstance(entry_id_bytes, bytes) else entry_id_bytes
+                    entry_id = (
+                        entry_id_bytes.decode()
+                        if isinstance(entry_id_bytes, bytes)
+                        else entry_id_bytes
+                    )
                     cache_key = self._make_cache_key(prefix_hash, entry_id)
                     ttl_key = f"layercache:ttl:{entry_id}"
                     await pipe.delete(cache_key, ttl_key)

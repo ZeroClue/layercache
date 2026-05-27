@@ -14,9 +14,7 @@ cache namespace (different prefix_hash).
 from __future__ import annotations
 
 import logging
-import re
-from enum import Enum
-from typing import Any
+from enum import StrEnum
 
 import tiktoken
 
@@ -25,7 +23,7 @@ from .models import LayerType, StratifiedMessage, StratifiedPrompt
 logger = logging.getLogger(__name__)
 
 
-class TruncationStrategy(str, Enum):
+class TruncationStrategy(StrEnum):
     """Available truncation strategies."""
 
     RECENT = "recent"
@@ -73,10 +71,19 @@ class Truncator:
     """Smart session truncation."""
 
     # Keywords that indicate important context
-    IMPORTANT_KEYWORDS = frozenset({
-        "system", "instruction", "context", "rule", "constraint",
-        "requirement", "specification", "definition", "schema",
-    })
+    IMPORTANT_KEYWORDS = frozenset(
+        {
+            "system",
+            "instruction",
+            "context",
+            "rule",
+            "constraint",
+            "requirement",
+            "specification",
+            "definition",
+            "schema",
+        }
+    )
 
     def __init__(
         self,
@@ -133,9 +140,7 @@ class Truncator:
             kept = self._truncate_important(l2_messages, max_tokens)
         elif self.strategy == TruncationStrategy.SEMANTIC:
             # Deferred to v1.6 — fall back to recent
-            logger.warning(
-                "Semantic truncation not implemented (v1.6), falling back to recent"
-            )
+            logger.warning("Semantic truncation not implemented (v1.6), falling back to recent")
             kept = self._truncate_recent(l2_messages, max_tokens)
         else:
             kept = self._truncate_recent(l2_messages, max_tokens)
@@ -260,8 +265,7 @@ class Truncator:
                 for item in content
             )
             content_str = " ".join(
-                item.get("text", "") if isinstance(item, dict) else item
-                for item in content
+                item.get("text", "") if isinstance(item, dict) else item for item in content
             )
         else:
             base_score = 0

@@ -251,6 +251,7 @@ class RequestPipeline:
 
             if self.metrics_db:
                 from datetime import UTC, datetime
+
                 task = asyncio.create_task(
                     self.metrics_db.insert_request(
                         created_at=datetime.now(UTC).isoformat(),
