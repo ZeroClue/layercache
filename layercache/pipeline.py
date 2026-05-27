@@ -249,16 +249,47 @@ class RequestPipeline:
                                 cache_tier_used = "semantic"
 
                     if cache_entry:
-                        self.metrics.record_semantic_cache_hit()
+                        usage = cache_entry.response_payload.get("usage", {}) or {}
+                        hit_input = usage.get("prompt_tokens", 0) or 0
+                        hit_output = usage.get("completion_tokens", 0) or 0
+                        self.metrics.record_semantic_cache_hit(
+                            model=request.model,
+                            input_tokens=hit_input,
+                            output_tokens=hit_output,
+                        )
                         logger.info(
-                            "Semantic cache HIT for model=%s (prefix=%s...)",
+                            "Semantic cache HIT for model=%s (prefix=%s...) saved %d+%d tokens",
                             request.model,
                             cache_entry.prefix_hash[:12],
+                            hit_input,
+                            hit_output,
                         )
 
                         # Track probation on cache hit (Phase 2.1b)
                         if self._multi_tier_enabled and self._probation_tracker and cache_entry.id:
                             await self._probation_tracker.increment_probation_count(cache_entry.id)
+
+                        # Record request metrics for analytics rollup
+                        if self.metrics_db:
+                            from datetime import UTC, datetime
+
+                            task = asyncio.create_task(
+                                self.metrics_db.insert_request(
+                                    created_at=datetime.now(UTC).isoformat(),
+                                    model=request.model,
+                                    session_id=request.lc_session_id,
+                                    semantic_cache_hit=True,
+                                    cache_tier="semantic",
+                                    duration_ms=0,
+                                    input_tokens=0,
+                                    output_tokens=0,
+                                    cache_read_tokens=hit_input + hit_output,
+                                    cache_creation_tokens=0,
+                                    template_name=request.lc_template,
+                                    enhancements=request.lc_enhancements,
+                                )
+                            )
+                            task.add_done_callback(_log_task_error)
 
                         return cache_entry.response_payload
 
@@ -301,10 +332,10 @@ class RequestPipeline:
             cache_metrics = adapter.extract_cache_metrics(response)
             self.metrics.record_request(
                 model=request.model,
-                input_tokens=cache_metrics.get("input_tokens", 0),
-                output_tokens=cache_metrics.get("output_tokens", 0),
-                cache_read_tokens=cache_metrics.get("cache_read_input_tokens", 0),
-                cache_creation_tokens=cache_metrics.get("cache_creation_input_tokens", 0),
+                input_tokens=cache_metrics.get("input_tokens") or 0,
+                output_tokens=cache_metrics.get("output_tokens") or 0,
+                cache_read_tokens=cache_metrics.get("cache_read_input_tokens") or 0,
+                cache_creation_tokens=cache_metrics.get("cache_creation_input_tokens") or 0,
                 duration_seconds=timer.duration,
             )
 
@@ -435,12 +466,45 @@ class RequestPipeline:
                                 cache_entry = None
 
                     if cache_entry:
-                        self.metrics.record_semantic_cache_hit()
-                        logger.info("Semantic cache HIT for streaming request")
+                        usage = cache_entry.response_payload.get("usage", {}) or {}
+                        hit_input = usage.get("prompt_tokens", 0) or 0
+                        hit_output = usage.get("completion_tokens", 0) or 0
+                        self.metrics.record_semantic_cache_hit(
+                            model=request.model,
+                            input_tokens=hit_input,
+                            output_tokens=hit_output,
+                        )
+                        logger.info(
+                            "Semantic cache HIT for streaming request (saved %d+%d tokens)",
+                            hit_input,
+                            hit_output,
+                        )
 
                         # Track probation on cache hit (Phase 2.1b)
                         if self._multi_tier_enabled and self._probation_tracker and cache_entry.id:
                             await self._probation_tracker.increment_probation_count(cache_entry.id)
+
+                        # Record request metrics for analytics rollup
+                        if self.metrics_db:
+                            from datetime import UTC, datetime
+
+                            task = asyncio.create_task(
+                                self.metrics_db.insert_request(
+                                    created_at=datetime.now(UTC).isoformat(),
+                                    model=request.model,
+                                    session_id=request.lc_session_id,
+                                    semantic_cache_hit=True,
+                                    cache_tier="semantic",
+                                    duration_ms=0,
+                                    input_tokens=0,
+                                    output_tokens=0,
+                                    cache_read_tokens=hit_input + hit_output,
+                                    cache_creation_tokens=0,
+                                    template_name=request.lc_template,
+                                    enhancements=request.lc_enhancements,
+                                )
+                            )
+                            task.add_done_callback(_log_task_error)
 
                         async for chunk in self._stream_cached_response(
                             cache_entry.response_payload
@@ -473,10 +537,17 @@ class RequestPipeline:
 
             # Stage 7: Stream from LLM
             final_chunk: dict[str, Any] | None = None
+            content_parts: list[str] = []
             async for chunk in self._stream_llm(payload, api_key, request.model, provider):
-                # Keep the last chunk for metrics (it carries usage data)
                 if isinstance(chunk, dict):
                     final_chunk = chunk
+                    # Accumulate content for cache storage
+                    for choice in chunk.get("choices", []):
+                        delta = choice.get("delta", {})
+                        if isinstance(delta, dict):
+                            c = delta.get("content")
+                            if c:
+                                content_parts.append(c)
                 yield chunk
 
             # Stage 8: Record metrics from the final streaming chunk
@@ -499,12 +570,55 @@ class RequestPipeline:
                 cache_metrics = adapter.extract_cache_metrics(final_chunk)
                 self.metrics.record_request(
                     model=request.model,
-                    input_tokens=input_tokens or cache_metrics.get("input_tokens", 0),
-                    output_tokens=output_tokens or cache_metrics.get("output_tokens", 0),
-                    cache_read_tokens=cache_metrics.get("cache_read_input_tokens", 0),
-                    cache_creation_tokens=cache_metrics.get("cache_creation_input_tokens", 0),
+                    input_tokens=input_tokens or cache_metrics.get("input_tokens") or 0,
+                    output_tokens=output_tokens or cache_metrics.get("output_tokens") or 0,
+                    cache_read_tokens=cache_metrics.get("cache_read_input_tokens") or 0,
+                    cache_creation_tokens=cache_metrics.get("cache_creation_input_tokens") or 0,
                     duration_seconds=timer.duration,
                 )
+
+            # Store in semantic cache for future lookups
+            if (
+                self.semantic_cache
+                and not request.lc_skip_semantic_cache
+                and not request.lc_bypass_cache
+                and request.lc_cache_ttl > 0
+                and final_chunk
+            ):
+                try:
+                    full_content = "".join(content_parts)
+                    response = {
+                        "id": final_chunk.get("id", ""),
+                        "object": "chat.completion",
+                        "created": final_chunk.get("created", 0),
+                        "model": final_chunk.get("model", request.model),
+                        "choices": [
+                            {
+                                "index": 0,
+                                "message": {
+                                    "role": "assistant",
+                                    "content": full_content,
+                                },
+                                "finish_reason": "stop",
+                            }
+                        ],
+                        "usage": final_chunk.get("usage", {}),
+                    }
+                    entry_id = await self.semantic_cache.store(
+                        prompt,
+                        response,
+                        request.model,
+                        ttl=request.lc_cache_ttl,
+                    )
+                    if self._multi_tier_enabled and self._probation_tracker and entry_id:
+                        await self._probation_tracker.increment_probation_count(entry_id)
+                        logger.debug(
+                            "New cache entry in probation (id=%s, prefix=%s...)",
+                            entry_id[:12],
+                            prompt.prefix_hash()[:12],
+                        )
+                except Exception as e:
+                    logger.warning("Failed to store streaming response in semantic cache: %s", e)
 
             # Stage 9: Trigger provider-specific background cache creation
             if hasattr(adapter, "create_cached_content"):

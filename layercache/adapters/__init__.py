@@ -60,12 +60,17 @@ def detect_provider(
     """
     model_lower = model_name.lower()
 
-    # If the model uses LiteLLM prefix format (provider/model), check
-    # the config for an explicit adapter override on that prefix.
-    if providers_config and "/" in model_lower:
-        prefix = model_lower.split("/")[0]
-        if prefix in providers_config.root:
-            return prefix
+    # Check the config for an explicit adapter override.
+    # First try exact match of the model prefix (before /), then
+    # check if any config key is a prefix of the entire model name.
+    if providers_config:
+        if "/" in model_lower:
+            prefix = model_lower.split("/")[0]
+            if prefix in providers_config.root:
+                return prefix
+        for key in providers_config.root:
+            if model_lower.startswith(key):
+                return key
 
     # Check for explicit prefix (provider/model format)
     if "/" in model_lower:

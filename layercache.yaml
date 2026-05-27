@@ -10,7 +10,7 @@ providers:
     api_key_env: OPENAI_API_KEY
   gemini:
     api_key_env: GOOGLE_API_KEY
-  opencode:
+  opencode-go:
     api_key_env: OPENCODE_ZEN_API_KEY
     base_url: https://opencode.ai/zen/v1
     default_model: opencode-go/qwen3.5-plus

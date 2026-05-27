@@ -111,10 +111,27 @@ class MetricsCollector:
                 if len(self._request_latencies) > self._max_latency_samples:
                     self._request_latencies = self._request_latencies[-self._max_latency_samples :]
 
-    def record_semantic_cache_hit(self) -> None:
-        """Record a semantic cache hit (no LLM call needed)."""
+    def record_semantic_cache_hit(
+        self,
+        model: str = "",
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+    ) -> None:
+        """Record a semantic cache hit (no LLM call needed).
+
+        When model and token counts are provided, the savings from
+        serving the response from cache (vs. calling the LLM) are
+        recorded in the estimated_tokens_saved / cost_saved metrics.
+        """
         with self._lock:
             self._semantic_cache_hits_total += 1
+            if model and (input_tokens > 0 or output_tokens > 0):
+                self._total_tokens_saved += input_tokens + output_tokens
+                pricing = self._get_pricing(model)
+                cost_saved = (input_tokens / 1_000_000) * pricing["input"] + (
+                    output_tokens / 1_000_000
+                ) * pricing["output"]
+                self._total_cost_saved_usd += cost_saved
 
     def record_semantic_cache_miss(self) -> None:
         """Record a semantic cache miss."""

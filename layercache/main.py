@@ -76,6 +76,7 @@ _metrics: MetricsCollector | None = None
 _metrics_db: MetricsDB | None = None
 _metrics_aggregator: MetricsAggregator | None = None
 _snapshot_task: Any = None
+_rollup_task: Any = None
 _semantic_cache: SemanticCache | None = None
 _prompt_registry: PromptRegistry | None = None
 _stratifier: Stratifier | None = None
@@ -145,8 +146,8 @@ def reload_config() -> dict[str, Any]:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan: initialize and cleanup resources."""
-    global _settings, _pipeline, _metrics, _metrics_db, _metrics_aggregator, _snapshot_task
-    global _semantic_cache, _prompt_registry, _stratifier
+    global _settings, _pipeline, _metrics, _metrics_db, _metrics_aggregator
+    global _snapshot_task, _rollup_task, _semantic_cache, _prompt_registry, _stratifier
 
     # Load configuration (merge YAML + env vars)
     _settings = LayerCacheSettings.from_yaml("layercache.yaml")
@@ -282,6 +283,42 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     _snapshot_task = asyncio.create_task(_snapshot_loop())
 
+    # Start background metrics rollup task (hourly/daily rollups for analytics)
+    async def _rollup_loop() -> None:
+        interval = 300  # every 5 minutes
+        consecutive_failures = 0
+        next_run = time.time() + interval
+        while True:
+            try:
+                now = time.time()
+                sleep_sec = max(0.0, next_run - now)
+                if sleep_sec > 0:
+                    await asyncio.sleep(sleep_sec)
+                next_run = time.time() + interval
+                if _metrics_aggregator:
+                    from datetime import UTC, datetime
+
+                    current_hour = datetime.now(UTC).strftime("%Y-%m-%dT%H:00:00")
+                    rollup = await _metrics_aggregator.compute_hourly_rollup(current_hour)
+                    if rollup:
+                        await _metrics_aggregator.save_hourly_rollup(rollup)
+
+                    current_date = datetime.now(UTC).strftime("%Y-%m-%d")
+                    daily = await _metrics_aggregator.compute_daily_rollup(current_date)
+                    if daily:
+                        await _metrics_aggregator.save_daily_rollup(daily)
+                consecutive_failures = 0
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                consecutive_failures += 1
+                backoff = min(interval * (2 ** (consecutive_failures - 1)), 3600)
+                if consecutive_failures <= 1 or consecutive_failures % 10 == 0:
+                    logger.exception("Metrics rollup task failed (will retry in %ds)", backoff)
+                await asyncio.sleep(backoff)
+
+    _rollup_task = asyncio.create_task(_rollup_loop())
+
     # Set shared state for dashboard access
     app.state.metrics = _metrics
     app.state.metrics_db = _metrics_db
@@ -310,6 +347,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         _snapshot_task.cancel()
         try:
             await _snapshot_task
+        except asyncio.CancelledError:
+            pass
+    if _rollup_task:
+        _rollup_task.cancel()
+        try:
+            await _rollup_task
         except asyncio.CancelledError:
             pass
     if _metrics_aggregator:
@@ -461,6 +504,9 @@ async def chat_completions(
             api_key = authorization[7:]
         if not api_key:
             api_key = request.headers.get("x-api-key", "")
+        # For configured providers (e.g. opencode-go), fall back to env
+        if not api_key and _settings:
+            api_key = _resolve_provider_api_key(model)
 
     # Reject empty API keys with a clear 401
     if not api_key:

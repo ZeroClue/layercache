@@ -21,11 +21,12 @@ services:
       - "8000:8000"
     volumes:
       - ./data:/data
-      - ./layercache.yaml:/app/layercache.yaml:ro
+      - ./layercache.yaml:/app/layercache.yaml
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - OPENCODE_ZEN_API_KEY=${OPENCODE_ZEN_API_KEY:-}
     depends_on:
       redis:
         condition: service_healthy
@@ -66,5 +67,6 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
 
 volumes:
+  redis-data:
   prometheus-data:
   grafana-data:

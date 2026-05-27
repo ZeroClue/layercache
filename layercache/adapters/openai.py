@@ -55,18 +55,18 @@ class OpenAIAdapter(BaseAdapter):
 
         Falls back to usage.cached_tokens for backward compatibility.
         """
-        usage = response.get("usage", {})
+        usage = response.get("usage") or {}
 
         cached_tokens = 0
-        prompt_tokens_details = usage.get("prompt_tokens_details", {})
+        prompt_tokens_details = usage.get("prompt_tokens_details") or {}
         if prompt_tokens_details:
-            cached_tokens = prompt_tokens_details.get("cached_tokens", 0)
+            cached_tokens = prompt_tokens_details.get("cached_tokens") or 0
         else:
-            cached_tokens = usage.get("cached_tokens", 0)
+            cached_tokens = usage.get("cached_tokens") or 0
 
         return {
-            "cache_read_input_tokens": cached_tokens,
+            "cache_read_input_tokens": cached_tokens or 0,
             "cache_creation_input_tokens": 0,
-            "input_tokens": usage.get("prompt_tokens", 0),
-            "output_tokens": usage.get("completion_tokens", 0),
+            "input_tokens": usage.get("prompt_tokens") or 0,
+            "output_tokens": usage.get("completion_tokens") or 0,
         }
