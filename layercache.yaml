@@ -18,11 +18,11 @@ caching:
   semantic:
     enabled: true
     backend: sqlite
-    db_path: /tmp/layercache_semantic.db
+    db_path: /data/layercache_semantic.db
     similarity_threshold: 0.95
     default_ttl: 3600
   metrics:
-    db_path: /tmp/layercache/metrics.db
+    db_path: /data/layercache/metrics.db
     snapshot_interval_seconds: 60
     snapshot_retention_days: 7
 enhancements:
