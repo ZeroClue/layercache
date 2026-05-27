@@ -23,3 +23,8 @@ venv/
 *.log
 .vscode/
 .idea/
+.agents/
+.opencode/
+docs/
+*.md
+!README.md

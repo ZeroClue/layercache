@@ -40,6 +40,9 @@ data/cache/
 *.db-wal
 *.db-shm
 
+# Agent workspace
+.agents/
+
 # Model weights
 *.bin
 *.safetensors

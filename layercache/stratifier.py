@@ -59,6 +59,7 @@ class Stratifier:
         messages: list[dict[str, Any]],
         template_name: str | None = None,
         layer_hints: dict[int, str] | None = None,
+        session_id: str | None = None,
     ) -> StratifiedPrompt:
         """Classify messages into L0-L4 layers.
 
@@ -66,11 +67,12 @@ class Stratifier:
             messages: Standard OpenAI-format message array.
             template_name: If set, load L0/L1 from the Prompt Registry.
             layer_hints: Explicit mapping of message index -> layer name string.
+            session_id: Optional session ID for cache isolation.
 
         Returns:
             A StratifiedPrompt with messages organized by layer.
         """
-        prompt = StratifiedPrompt()
+        prompt = StratifiedPrompt(session_id=session_id)
 
         if template_name and self._registry:
             self._stratify_with_template(prompt, messages, template_name)

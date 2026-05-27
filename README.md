@@ -1,7 +1,7 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.4.0-blue" alt="Version 1.4.0">
+  <img src="https://img.shields.io/badge/version-1.5.0-blue" alt="Version 1.5.0">
   <img src="https://img.shields.io/badge/python-3.11+-green" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-117%20passing-brightgreen" alt="117 Tests Passing">
+  <img src="https://img.shields.io/badge/tests-162%20passing-brightgreen" alt="162 Tests Passing">
   <img src="https://img.shields.io/github/actions/workflow/status/ZeroClue/layercache/ci.yml?branch=main" alt="CI">
   <img src="https://img.shields.io/badge/license-MIT-orange" alt="MIT License">
 </p>
@@ -73,8 +73,6 @@ The key insight behind LayerCache is that prompts have **naturally occurring lay
 
 Cache breakpoints are placed at L0/L1/L2 boundaries. Enhancements are injected at L3, ensuring they never invalidate the stable prefix.
 
-## Features
-
 ### Cache Optimization
 - **Prompt Canonicalizer** — Whitespace normalization, JSON minification, tool sorting for byte-for-byte deterministic output
 - **Layered Architecture (L0-L4)** — Separates system, context, session, enhancement, and user content so enhancements never invalidate the cached prefix
@@ -82,12 +80,14 @@ Cache breakpoints are placed at L0/L1/L2 boundaries. Enhancements are injected a
 - **Injection at Stable Layers** — Markers placed at L0/L1/L2 boundaries; L3/L4 left uncached
 
 ### Session Management
-- **L2 Session Truncation** — Automatically drops old conversation turns to keep the cacheable prefix within a token budget (turn-group-aware, preserves tool-call clusters)
+- **Smart Truncation** — Automatically drop old conversation turns to fit within token budgets (`recent` or `important` strategies)
 - **Prefix Threshold Diagnostics** — Info-level warning when L0+L1+L2 is below the ~1024-token caching threshold
 
 ### Semantic Cache
+- **Dual Backend Support** — SQLite (dev) or Redis (production) with automatic fallback
 - **Local Embeddings** — FastEmbed (BAAI/bge-small-en-v1.5) in ProcessPoolExecutor
 - **Dual-Key Strategy** — Prefix hash (exact) + query embedding (semantic similarity)
+- **Session Isolation** — Prevent cross-session cache pollution with automatic session ID management
 - **Configurable TTLs** — Per-request and default TTLs with automatic cleanup
 
 ### Prompt Enhancements
@@ -97,6 +97,7 @@ Cache breakpoints are placed at L0/L1/L2 boundaries. Enhancements are injected a
 - **Prompt Registry** — Named, versioned prompt templates (YAML/JSON)
 
 ### Observability & Management
+- **Analytics Dashboard** — Interactive charts for cache hit rates, token savings, latency trends, and cost tracking
 - **Prometheus + JSON Metrics** — Token savings, cost reduction, cache hit rates
 - **Web Dashboard** — Overview charts, per-model breakdown, cache browser, config editor, live log viewer (Jinja2 + HTMX + Chart.js)
 - **Persistent Time-Series** — Metric snapshots in SQLite with background collection loop
@@ -109,12 +110,15 @@ Cache breakpoints are placed at L0/L1/L2 boundaries. Enhancements are injected a
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/layercache.git
+git clone https://github.com/ZeroClue/layercache.git
 cd layercache
 
 # Set your API keys
 export ANTHROPIC_API_KEY=sk-ant-...
 export OPENAI_API_KEY=sk-...
+
+# For Redis backend (production):
+# export LAYERCACHE_REDIS_URL=redis://localhost:6379/0
 
 # Start the proxy
 docker-compose up -d
@@ -138,7 +142,7 @@ uvicorn layercache.main:app --host 0.0.0.0 --port 8000
 
 ```bash
 curl http://localhost:8000/health
-# {"status":"healthy","version":"1.4.0","semantic_cache":true}
+# {"status":"healthy","version":"1.5.0","semantic_cache":true}
 ```
 
 Open [http://localhost:8000/dashboard](http://localhost:8000/dashboard) for the web dashboard (config editor, metrics charts, logs, template CRUD).
@@ -335,15 +339,20 @@ providers:
 caching:
   semantic:
     enabled: true
+    backend: "sqlite"               # or "redis" for production
     db_path: /data/semantic_cache.db
-    default_ttl: 300              # 5 minutes
-    similarity_threshold: 0.95    # Cosine similarity for semantic cache
+    redis_url: "redis://localhost:6379/0"  # Redis backend URL (optional)
+    redis_pool_size: 20             # Redis connection pool size
+    default_ttl: 300                # 5 minutes
+    similarity_threshold: 0.95      # Cosine similarity for semantic cache
     embedder: "BAAI/bge-small-en-v1.5"
-  max_session_tokens: 2000        # Optional: truncate L2 to keep within token budget
+    session_isolation: true         # Prevent cross-session cache pollution
+  max_session_tokens: 2000          # Optional: truncate L2 to keep within token budget
+  truncation_strategy: "recent"     # or "important" (score-based)
   metrics:
-    db_path: /data/metrics.db     # Time-series snapshot storage
-    snapshot_interval_seconds: 60  # Background snapshot interval
-    snapshot_retention_days: 7     # Snapshot retention
+    db_path: /data/metrics.db       # Time-series snapshot storage
+    snapshot_interval_seconds: 60   # Background snapshot interval
+    snapshot_retention_days: 7      # Snapshot retention
 
 enhancements:
   registered:
@@ -522,6 +531,7 @@ layercache/
 
 ## Documentation
 
+### Core Documentation
 | Document | Description |
 |----------|-------------|
 | [PRD](docs/PRD.md) | Product Requirements Document |
@@ -534,6 +544,13 @@ layercache/
 | [API Reference](docs/API.md) | Full API documentation |
 | [Contributing](CONTRIBUTING.md) | How to contribute, setup, and PR process |
 | [CHANGELOG](CHANGELOG.md) | Version history and changes |
+
+### v1.5.0 Guides
+| Document | Description |
+|----------|-------------|
+| [Redis Setup](docs/redis-setup.md) | Production Redis configuration and tuning |
+| [Migration Guide](docs/migration-sqlite-to-redis.md) | Zero-downtime migration from SQLite to Redis |
+| [Load Test Report](docs/load-test-report.md) | Performance benchmarks and throughput analysis |
 
 ## License
 

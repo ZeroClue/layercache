@@ -71,7 +71,7 @@ docker-compose up -d
 
 ```bash
 curl http://localhost:8000/health
-# {"status":"healthy","version":"1.4.0","semantic_cache":true}
+# {"status":"healthy","version":"1.5.0","semantic_cache":true}
 
 curl http://localhost:8000/v1/cache/metrics
 # {"llm_requests_total":0,"provider_token_cache_hit_rate":0,...}
@@ -97,7 +97,7 @@ client = OpenAI(
 ### Build the Image
 
 ```bash
-docker build -t layercache:1.4.0 .
+docker build -t layercache:1.5.0 .
 ```
 
 ### Run
@@ -110,7 +110,7 @@ docker run -d \
   -e OPENAI_API_KEY=sk-... \
   -v ./data:/data \
   -v ./layercache.yaml:/app/layercache.yaml:ro \
-  layercache:1.4.0
+  layercache:1.5.0
 ```
 
 ### Build Arguments
@@ -157,11 +157,14 @@ providers:
 caching:
   semantic:
     enabled: true                        # Enable/disable semantic cache
-    backend: sqlite                      # Storage backend (sqlite)
+    backend: sqlite                      # Storage backend (sqlite or redis)
     db_path: /data/semantic_cache.db     # Path to SQLite database
+    redis_url: "redis://localhost:6379/0"  # Redis URL (if using redis backend)
+    redis_pool_size: 20                  # Redis connection pool size
     default_ttl: 300                     # Default cache TTL in seconds
     similarity_threshold: 0.95           # Minimum cosine similarity for cache hit
     embedder: "BAAI/bge-small-en-v1.5"  # FastEmbed model name
+    session_isolation: true              # Prevent cross-session cache pollution
 
   metrics:
     db_path: /data/metrics.db            # Path to metrics SQLite DB
@@ -169,6 +172,7 @@ caching:
     retention_hours: 24                   # How long to retain snapshots
 
   max_session_tokens: 2000                # Optional: truncate L2 to keep within this token budget
+  truncation_strategy: "recent"           # or "important" (score-based)
 
 enhancements:
   registered:
@@ -249,7 +253,7 @@ Response:
 ```json
 {
   "status": "healthy",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "semantic_cache": true,
   "semantic_cache_stats": {
     "total_entries": 42,
@@ -351,14 +355,17 @@ llm-proxy.your-domain.com {
 
 A single LayerCache instance can handle thousands of requests per minute. The SQLite semantic cache and in-memory enhancement registry are optimized for single-node operation.
 
-### Horizontal Scaling (Future)
+### Horizontal Scaling with Redis (V1.5.0+)
 
-See the [ROADMAP.md](ROADMAP.md) for the full plan. Summary of what changes:
+For production deployments requiring horizontal scaling:
 
-1. **Replace SQLite with Redis** — Point the semantic cache at a Redis instance for shared state
-2. **Externalize the Prompt Registry** — Use a shared volume mount (NFS, S3, Git-synced)
-3. **Load Balance** — Place LayerCache behind an L4 load balancer (round-robin is fine)
-4. **Centralized Metrics** — Point all instances at the same Prometheus server
+1. **Enable Redis backend** — Configure `caching.semantic.backend: "redis"` in `layercache.yaml`
+2. **Deploy Redis** — Use Redis Cluster or Sentinel for high availability (see [Redis Setup Guide](redis-setup.md))
+3. **Load Balance** — Place multiple LayerCache instances behind an L4 load balancer
+4. **Session Isolation** — Enable `session_isolation: true` to prevent cross-session cache pollution
+5. **Centralized Metrics** — Point all instances at the same Prometheus server
+
+See the [Migration Guide](migration-sqlite-to-redis.md) for zero-downtime migration from SQLite to Redis.
 
 ### Resource Requirements
 
@@ -392,7 +399,7 @@ spec:
     spec:
       containers:
         - name: layercache
-          image: layercache:1.4.0
+          image: layercache:1.5.0
           ports:
             - containerPort: 8000
           env:

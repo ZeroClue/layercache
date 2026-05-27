@@ -55,12 +55,15 @@ Your App → LayerCache → Anthropic/OpenAI/Gemini API
 
 ```bash
 # Clone the repo
-git clone https://github.com/your-org/layercache.git
+git clone https://github.com/ZeroClue/layercache.git
 cd layercache
 
 # Set your API key(s)
 export ANTHROPIC_API_KEY=sk-ant-...
 export OPENAI_API_KEY=sk-...
+
+# For production with Redis:
+# export LAYERCACHE_REDIS_URL=redis://localhost:6379/0
 
 # Start with Docker
 docker-compose up -d
@@ -586,6 +589,57 @@ This diagnostic fires after any truncation, so it measures the final prefix leng
 
 ---
 
+## Analytics Dashboard
+
+**New in v1.5.0** — The analytics dashboard provides historical trends and deep insights into cache performance over time.
+
+### Accessing Analytics
+
+Navigate to `http://localhost:8000/dashboard/analytics` or click "Analytics" from the main dashboard.
+
+### Features
+
+- **Time Range Selector**: Choose 24h, 7d, or 30d views
+- **Cache Hit Rate Trends**: See how your cache performance evolves
+- **Token Savings Charts**: Track cumulative tokens and cost savings
+- **Latency Analysis**: Monitor p95 and average latency over time
+- **Request Volume**: Understand traffic patterns and peak usage
+
+### How It Works
+
+The analytics system uses pre-computed hourly and daily rollups stored in the metrics database:
+
+1. **Background Aggregation**: Every 60 seconds, metrics are snapshot to SQLite
+2. **Rollup Tables**: Hourly and daily aggregates are computed on-the-fly
+3. **Async Queries**: All analytics endpoints use `aiosqlite` for non-blocking DB access
+4. **Auto-Refresh**: Dashboard updates every 60 seconds via HTMX
+
+### Configuration
+
+Analytics are enabled by default. To adjust retention:
+
+```yaml
+caching:
+  metrics:
+    db_path: /data/metrics.db
+    snapshot_interval_seconds: 60
+    snapshot_retention_days: 7  # Adjust retention period
+```
+
+### API Access
+
+Analytics data is also available via REST API:
+
+```bash
+# Get analytics for last 24 hours
+curl http://localhost:8000/dashboard/analytics/data?hours=24
+
+# Get analytics for last 7 days
+curl http://localhost:8000/dashboard/analytics/data?hours=168
+```
+
+---
+
 ## Monitoring & Metrics
 
 ### Web Dashboard
@@ -593,6 +647,7 @@ This diagnostic fires after any truncation, so it measures the final prefix leng
 LayerCache includes a built-in web dashboard at `http://localhost:8000/dashboard`. It provides:
 
 - **Overview**: Request rate, latency distribution, cost savings charts (live-updating via Chart.js)
+- **Analytics**: Historical trends for cache hit rates, token savings, and latency (v1.5.0+)
 - **Models**: Per-model breakdown of requests, tokens, cache hit rate
 - **Cache**: Semantic cache browser (entries, expiry, similarity)
 - **Templates**: Template list, create, edit, and delete
@@ -600,6 +655,8 @@ LayerCache includes a built-in web dashboard at `http://localhost:8000/dashboard
 - **Logs**: Live streaming log viewer (via SSE)
 
 If `proxy_api_key` is configured, the dashboard requires login. Otherwise, it's open.
+
+See the [Analytics Dashboard](#analytics-dashboard) section for detailed usage of the new analytics features.
 
 ### JSON Metrics
 
@@ -754,4 +811,18 @@ A: You can invalidate by prefix hash via the API, or simply delete the SQLite da
 
 **Q: Can I run multiple LayerCache instances?**
 
-A: In V1, each instance has its own local SQLite cache. For multi-instance deployment, use Redis as the cache backend (planned for V2 — see [ROADMAP.md](ROADMAP.md)). The provider prefix caching (Anthropic/OpenAI) works across all instances independently.
+A: In V1, each instance has its own local SQLite cache. For multi-instance deployment, use Redis as the cache backend (available in v1.5.0+). See the [Redis Setup Guide](docs/redis-setup.md) and [Migration Guide](docs/migration-sqlite-to-redis.md) for details. The provider prefix caching (Anthropic/OpenAI) works across all instances independently.
+
+**Q: How do I migrate from SQLite to Redis?**
+
+A: See the [Migration Guide](docs/migration-sqlite-to-redis.md) for step-by-step instructions. The migration can be performed with zero downtime using a gradual cutover approach, or during a maintenance window for simpler execution.
+
+**Q: What are the new v1.5.0 features?**
+
+A: Version 1.5.0 introduces:
+- **Redis backend** for production deployments with high concurrency
+- **Smart truncation** with `recent` and `important` strategies for managing long conversations
+- **Analytics dashboard** with historical trends and interactive charts
+- **Session isolation** to prevent cross-session cache pollution
+
+See the [CHANGELOG](CHANGELOG.md) for full details.

@@ -8,9 +8,25 @@ Consolidated direction for LayerCache — drawn from the PRD, TDD, architecture 
 
 LayerCache's evolution follows three phases:
 
-1. **Single-instance proxy** (V1) — current; drop-in caching proxy
-2. **Distributed infrastructure** (V2) — shared state, observability, horizontal scaling
+1. **Single-instance proxy** (V1) — ✅ **Complete** (v1.5.0 released)
+2. **Distributed infrastructure** (V2) — Redis backend now available in v1.5.0
 3. **Platform ecosystem** (V3) — plugins, A/B testing, custom models
+
+---
+
+## ✅ V1.5.0 — Complete (May 2026)
+
+The following features have been shipped in v1.5.0:
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| **Redis semantic cache** | ✅ Shipped | Production-ready with connection pooling, session isolation, TTL management |
+| **Smart truncation** | ✅ Shipped | `recent` and `important` strategies, turn-group-aware, preserves tool-call clusters |
+| **Analytics dashboard** | ✅ Shipped | Interactive charts, historical trends, pre-computed rollups |
+| **Session isolation** | ✅ Shipped | UUID-based, X-Session-ID header, automatic generation |
+| **Load testing framework** | ✅ Shipped | Locust-based, 3 scenarios, 1,174 req/s achieved |
+
+See the [CHANGELOG](CHANGELOG.md) for full release notes.
 
 ---
 
@@ -20,7 +36,7 @@ LayerCache's evolution follows three phases:
 
 | Item | Dependencies | Notes |
 |------|-------------|-------|
-| **Redis semantic cache** | Production Redis (sentinel/cluster, auth, connection pooling) | Replace SQLite with Redis for shared state across instances. Not a straight swap — serialization, TTL, and eviction models differ from aiosqlite. |
+| ~~**Redis semantic cache**~~ | ~~Production Redis~~ | ✅ **Completed in v1.5.0** |
 | **Git-synced prompt registry** | SSH key management in container, Git hosting webhook | Watch a Git repo for prompt template changes instead of mounting YAML files. Adds network dependency and credential rotation burden. Enables GitOps workflows. |
 
 ### P1 — Observability & operations

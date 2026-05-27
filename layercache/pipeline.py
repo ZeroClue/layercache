@@ -26,9 +26,11 @@ from .canonicalizer import Canonicalizer
 from .config import ProvidersConfig
 from .enhancements.base import EnhancementRegistry
 from .metrics.collector import MetricsCollector, RequestTimer
-from .models import LayerCacheRequest, LayerType, StratifiedMessage, StratifiedPrompt
+from .metrics.storage import MetricsDB
+from .models import LayerCacheRequest, LayerType, StratifiedPrompt
 from .registry.prompt_registry import PromptRegistry
 from .stratifier import Stratifier
+from .truncation import TokenCounter, TruncationStrategy, Truncator
 
 logger = logging.getLogger(__name__)
 
@@ -74,10 +76,12 @@ class RequestPipeline:
         semantic_cache: SemanticCache | None,
         prompt_registry: PromptRegistry | None,
         metrics: MetricsCollector,
+        metrics_db: MetricsDB | None = None,
         timeout: int = 120,
         max_retries: int = 3,
         max_session_tokens: int | None = None,
         providers_config: ProvidersConfig | None = None,
+        truncation_strategy: str = "recent",
     ) -> None:
         self.stratifier = stratifier
         self.canonicalizer = canonicalizer
@@ -85,94 +89,19 @@ class RequestPipeline:
         self.semantic_cache = semantic_cache
         self.prompt_registry = prompt_registry
         self.metrics = metrics
+        self.metrics_db = metrics_db
         self._timeout = timeout
         self._max_retries = max_retries
         self._max_session_tokens = max_session_tokens
         self._providers_config = providers_config
 
+        # Truncation
+        strategy = TruncationStrategy(truncation_strategy.lower())
+        self._truncator = Truncator(strategy=strategy, token_counter=TokenCounter())
+
         # P2: throttled prefix-hash warning set
         self._prefix_warning_throttle: dict[str, float] = {}
         self._prefix_warning_throttle_max = 10000
-
-    # ------------------------------------------------------------------
-    # P3: Session truncation
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _split_turns(
-        messages: list[StratifiedMessage],
-    ) -> list[list[StratifiedMessage]]:
-        """Split session messages into turn groups. A turn starts with a user message."""
-        turns: list[list[StratifiedMessage]] = []
-        current: list[StratifiedMessage] = []
-        for m in messages:
-            if m.role == "user" and current:
-                turns.append(current)
-                current = []
-            current.append(m)
-        if current:
-            turns.append(current)
-        return turns
-
-    def _truncate_session(
-        self,
-        prompt: StratifiedPrompt,
-        model: str,
-    ) -> None:
-        """Truncate L2 to fit within max_session_tokens.
-
-        Splits session messages into turn groups (user→assistant/tool sequences)
-        and drops the oldest groups until the remaining fit within budget.
-        At least one turn is always preserved, even if it exceeds the budget.
-        Logs at INFO when truncation occurs.
-        """
-        max_tokens = self._max_session_tokens
-        if max_tokens is None or max_tokens <= 0:
-            return
-
-        session_msgs = prompt.layers.get(LayerType.SESSION, [])
-        if not session_msgs:
-            return
-
-        import litellm
-
-        def _count(content: str) -> int:
-            try:
-                result = litellm.token_counter(model=model, text=content)
-                return int(result) if result is not None else len(content) // 2
-            except Exception:
-                return len(content) // 2
-
-        turns = self._split_turns(session_msgs)
-        if len(turns) <= 1:
-            return  # single turn, nothing to truncate
-
-        # Work backwards: keep trailing turns until budget is breached
-        kept_turns: list[list[StratifiedMessage]] = []
-        total_tokens = 0
-        for turn in reversed(turns):
-            turn_tokens = sum(_count(str(m.content)) for m in turn)
-            if total_tokens + turn_tokens > max_tokens and kept_turns:
-                break
-            kept_turns.insert(0, turn)
-            total_tokens += turn_tokens
-
-        # Flatten
-        kept: list[StratifiedMessage] = []
-        for t in kept_turns:
-            kept.extend(t)
-
-        if len(kept) != len(session_msgs):
-            prompt.layers[LayerType.SESSION] = kept
-            logger.info(
-                "Truncated L2 from %d to %d messages (%d turns, ~%d tokens) for model=%s. "
-                "Provider prefix caching enabled; semantic cache will miss for this conversation.",
-                len(session_msgs),
-                len(kept),
-                len(kept_turns),
-                total_tokens,
-                model,
-            )
 
     # ------------------------------------------------------------------
     # P2: Prefix threshold warning
@@ -257,6 +186,7 @@ class RequestPipeline:
                     request.messages,
                     template_name=request.lc_template,
                     layer_hints=request.lc_layer_hints,
+                    session_id=request.lc_session_id,
                 )
 
                 # Canonicalize the temp prompt so its hash matches what will be stored
@@ -281,6 +211,7 @@ class RequestPipeline:
                 request.messages,
                 template_name=request.lc_template,
                 layer_hints=request.lc_layer_hints,
+                session_id=request.lc_session_id,
             )
 
             # Stage 3: Canonicalization
@@ -305,7 +236,7 @@ class RequestPipeline:
             payload = adapter.inject_markers(prompt, payload)
 
             # Stage 7: Route to LLM Provider
-            response = await self._call_llm(payload, api_key)
+            response = await self._call_llm(payload, api_key, request.model, provider)
 
             # Stage 8: Extract metrics and store in semantic cache
             cache_metrics = adapter.extract_cache_metrics(response)
@@ -317,6 +248,25 @@ class RequestPipeline:
                 cache_creation_tokens=cache_metrics.get("cache_creation_input_tokens", 0),
                 duration_seconds=timer.duration,
             )
+
+            if self.metrics_db:
+                from datetime import UTC, datetime
+                task = asyncio.create_task(
+                    self.metrics_db.insert_request(
+                        created_at=datetime.now(UTC).isoformat(),
+                        model=request.model,
+                        session_id=request.lc_session_id,
+                        semantic_cache_hit=False,
+                        duration_ms=timer.duration * 1000,
+                        input_tokens=cache_metrics.get("input_tokens", 0),
+                        output_tokens=cache_metrics.get("output_tokens", 0),
+                        cache_read_tokens=cache_metrics.get("cache_read_input_tokens", 0),
+                        cache_creation_tokens=cache_metrics.get("cache_creation_input_tokens", 0),
+                        template_name=request.lc_template,
+                        enhancements=request.lc_enhancements,
+                    )
+                )
+                task.add_done_callback(_log_task_error)
 
             # Store in semantic cache for future lookups
             if (
@@ -386,6 +336,7 @@ class RequestPipeline:
                     request.messages,
                     template_name=request.lc_template,
                     layer_hints=request.lc_layer_hints,
+                    session_id=request.lc_session_id,
                 )
 
                 lookup_prompt, _canonical_tools = self.canonicalizer.canonicalize(
@@ -407,6 +358,7 @@ class RequestPipeline:
                 request.messages,
                 template_name=request.lc_template,
                 layer_hints=request.lc_layer_hints,
+                session_id=request.lc_session_id,
             )
             prompt, canonical_tools = self.canonicalizer.canonicalize(prompt, request.tools)
 
@@ -424,7 +376,7 @@ class RequestPipeline:
 
             # Stage 7: Stream from LLM
             final_chunk: dict[str, Any] | None = None
-            async for chunk in self._stream_llm(payload, api_key, provider):
+            async for chunk in self._stream_llm(payload, api_key, request.model, provider):
                 # Keep the last chunk for metrics (it carries usage data)
                 if isinstance(chunk, dict):
                     final_chunk = chunk
@@ -522,16 +474,41 @@ class RequestPipeline:
 
         return payload
 
-    async def _call_llm(self, payload: dict[str, Any], api_key: str) -> dict[str, Any]:
+    async def _call_llm(
+        self,
+        payload: dict[str, Any],
+        api_key: str,
+        model: str,
+        provider: str = "",
+    ) -> dict[str, Any]:
         """Route the request to the LLM provider via LiteLLM."""
         try:
             import litellm
 
+            # Look up base_url and adapter from provider config
+            kwargs: dict[str, Any] = {
+                "api_key": api_key,
+                "timeout": self._timeout,
+                "num_retries": self._max_retries,
+            }
+            litellm_model = model
+            if self._providers_config and provider in self._providers_config.root:
+                provider_cfg = self._providers_config.root[provider]
+                if provider_cfg.base_url:
+                    kwargs["api_base"] = provider_cfg.base_url
+                # Use adapter name as LiteLLM provider prefix
+                adapter = self._providers_config.adapter_for(provider)
+                # Build litellm model name: adapter/model_name
+                if "/" in model:
+                    model_name = model.split("/", 1)[1]
+                else:
+                    model_name = model
+                litellm_model = f"{adapter}/{model_name}"
+
             response = await litellm.acompletion(
-                **payload,
-                api_key=api_key,
-                timeout=self._timeout,
-                num_retries=self._max_retries,
+                model=litellm_model,
+                **{k: v for k, v in payload.items() if k != "model"},
+                **kwargs,
             )
             return response.model_dump()
         except Exception as e:
@@ -542,17 +519,37 @@ class RequestPipeline:
         self,
         payload: dict[str, Any],
         api_key: str,
+        model: str,
         provider: str = "",
     ) -> AsyncIterator[dict[str, Any] | str]:
         """Stream responses from the LLM provider via LiteLLM."""
         try:
             import litellm
 
+            # Look up base_url and adapter from provider config
+            kwargs: dict[str, Any] = {
+                "api_key": api_key,
+                "timeout": self._timeout,
+                "num_retries": self._max_retries,
+            }
+            litellm_model = model
+            if self._providers_config and provider in self._providers_config.root:
+                provider_cfg = self._providers_config.root[provider]
+                if provider_cfg.base_url:
+                    kwargs["api_base"] = provider_cfg.base_url
+                # Use adapter name as LiteLLM provider prefix
+                adapter = self._providers_config.adapter_for(provider)
+                # Build litellm model name: adapter/model_name
+                if "/" in model:
+                    model_name = model.split("/", 1)[1]
+                else:
+                    model_name = model
+                litellm_model = f"{adapter}/{model_name}"
+
             response = await litellm.acompletion(
-                **payload,
-                api_key=api_key,
-                timeout=self._timeout,
-                num_retries=self._max_retries,
+                model=litellm_model,
+                **{k: v for k, v in payload.items() if k != "model"},
+                **kwargs,
             )
             async for chunk in response:
                 yield chunk.model_dump()

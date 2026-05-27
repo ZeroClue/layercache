@@ -36,12 +36,14 @@ from .adapters.anthropic_messages import (
     openai_response_to_anthropic,
 )
 from .cache.embedder import get_embedder
+from .cache.factory import get_cache_backend
 from .cache.semantic import SemanticCache
 from .canonicalizer import Canonicalizer
 from .config import LayerCacheSettings
 from .dashboard import router as dashboard_router
 from .dashboard.router import _log_ring
 from .enhancements import DynamicFewShotEnhancement, create_default_registry
+from .metrics.aggregator import MetricsAggregator
 from .metrics.collector import MetricsCollector
 from .metrics.storage import MetricsDB
 from .models import LayerCacheRequest
@@ -72,6 +74,7 @@ _settings: LayerCacheSettings | None = None
 _pipeline: RequestPipeline | None = None
 _metrics: MetricsCollector | None = None
 _metrics_db: MetricsDB | None = None
+_metrics_aggregator: MetricsAggregator | None = None
 _snapshot_task: Any = None
 _semantic_cache: SemanticCache | None = None
 _prompt_registry: PromptRegistry | None = None
@@ -142,7 +145,7 @@ def reload_config() -> dict[str, Any]:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan: initialize and cleanup resources."""
-    global _settings, _pipeline, _metrics, _metrics_db, _snapshot_task
+    global _settings, _pipeline, _metrics, _metrics_db, _metrics_aggregator, _snapshot_task
     global _semantic_cache, _prompt_registry, _stratifier
 
     # Load configuration (merge YAML + env vars)
@@ -174,6 +177,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _metrics = MetricsCollector()
     _metrics_db = MetricsDB(db_path=_settings.caching.metrics.db_path)
     await _metrics_db.initialize()
+    _metrics_aggregator = MetricsAggregator(db_path=_settings.caching.metrics.db_path)
+    await _metrics_aggregator.connect()
 
     # Initialize prompt registry
     _prompt_registry = PromptRegistry(templates_dir="/data/prompts")
@@ -181,13 +186,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Initialize semantic cache
     if _settings.caching.semantic.enabled:
         embedder = get_embedder(_settings.caching.semantic.embedder)
-        _semantic_cache = SemanticCache(
-            db_path=_settings.caching.semantic.db_path,
-            default_ttl=_settings.caching.semantic.default_ttl,
-            similarity_threshold=_settings.caching.semantic.similarity_threshold,
+        _semantic_cache = await get_cache_backend(
+            config=_settings.caching.semantic,
             embedder=embedder,
         )
-        await _semantic_cache.initialize()
     else:
         _semantic_cache = None
 
@@ -233,10 +235,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         semantic_cache=_semantic_cache,
         prompt_registry=_prompt_registry,
         metrics=_metrics,
+        metrics_db=_metrics_db,
         timeout=timeout,
         max_retries=max_retries,
         max_session_tokens=_settings.caching.max_session_tokens,
         providers_config=_settings.providers,
+        truncation_strategy=_settings.caching.truncation_strategy,
     )
 
     # Start background metrics snapshot task
@@ -280,6 +284,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Set shared state for dashboard access
     app.state.metrics = _metrics
     app.state.metrics_db = _metrics_db
+    app.state.metrics_aggregator = _metrics_aggregator
     app.state.semantic_cache = _semantic_cache
     app.state.prompt_registry = _prompt_registry
     app.state.settings = _settings
@@ -306,6 +311,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await _snapshot_task
         except asyncio.CancelledError:
             pass
+    if _metrics_aggregator:
+        await _metrics_aggregator.close()
     if _metrics_db:
         await _metrics_db.close()
     if _semantic_cache:
@@ -465,6 +472,11 @@ async def chat_completions(
 
     # Build LayerCache request from the body
     try:
+        # Extract session ID from header or auto-generate
+        session_id = request.headers.get(_settings.caching.semantic.session_id_header)
+        if not session_id and _settings.caching.semantic.session_id_auto_generate:
+            session_id = str(uuid.uuid4())
+
         lc_request = LayerCacheRequest(
             model=model,
             messages=body.get("messages", []),
@@ -482,6 +494,7 @@ async def chat_completions(
             lc_layer_hints=body.get("lc_layer_hints"),
             lc_skip_semantic_cache=body.get("lc_skip_semantic_cache", False),
             lc_bypass_cache=body.get("lc_bypass_cache", False),
+            lc_session_id=session_id,
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid request: {e}")
@@ -490,10 +503,14 @@ async def chat_completions(
         return StreamingResponse(
             _handle_streaming(lc_request, api_key),
             media_type="text/event-stream",
+            headers={"X-Session-ID": session_id} if session_id else {},
         )
     else:
         response = await _pipeline.process_request(lc_request, api_key)
-        return JSONResponse(content=response)
+        return JSONResponse(
+            content=response,
+            headers={"X-Session-ID": session_id} if session_id else {},
+        )
 
 
 async def _handle_streaming(lc_request: LayerCacheRequest, api_key: str) -> AsyncIterator[str]:

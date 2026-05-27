@@ -10,12 +10,19 @@ providers:
     api_key_env: OPENAI_API_KEY
   gemini:
     api_key_env: GOOGLE_API_KEY
+  opencode:
+    api_key_env: OPENCODE_ZEN_API_KEY
+    base_url: https://opencode.ai/zen/v1
+    default_model: opencode-go/qwen3.5-plus
 caching:
   semantic:
-    enabled: false
+    enabled: true
+    backend: sqlite
     db_path: /tmp/layercache_semantic.db
+    similarity_threshold: 0.95
+    default_ttl: 3600
   metrics:
-    db_path: /data/metrics.db
+    db_path: /tmp/layercache/metrics.db
     snapshot_interval_seconds: 60
     snapshot_retention_days: 7
 enhancements:

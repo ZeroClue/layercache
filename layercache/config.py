@@ -99,8 +99,18 @@ class SemanticCacheConfig(BaseModel):
         default="/data/semantic_cache.db",
         description="Path to the SQLite database file",
     )
+    redis_url: str = Field(
+        default="redis://localhost:6379/0",
+        description="Redis connection URL (used when backend=redis)",
+    )
+    redis_pool_size: int = Field(
+        default=10, ge=1, le=100, description="Redis connection pool size"
+    )
+    redis_timeout: float = Field(
+        default=5.0, gt=0, description="Redis socket timeout in seconds"
+    )
     default_ttl: int = Field(
-        default=300, ge=0, description="Default TTL in seconds (0 = no expiry)"
+        default=3600, ge=0, description="Default TTL in seconds (0 = no expiry)"
     )
     similarity_threshold: float = Field(
         default=0.95,
@@ -111,6 +121,18 @@ class SemanticCacheConfig(BaseModel):
     embedder: str = Field(
         default="BAAI/bge-small-en-v1.5",
         description="FastEmbed model for query embeddings",
+    )
+    session_isolation: bool = Field(
+        default=True,
+        description="Isolate cache entries by session ID (prevents cross-session pollution)",
+    )
+    session_id_header: str = Field(
+        default="X-Session-ID",
+        description="HTTP header name for session ID (auto-generated if missing)",
+    )
+    session_id_auto_generate: bool = Field(
+        default=True,
+        description="Auto-generate session ID if not provided by client",
     )
 
 
@@ -142,6 +164,16 @@ class CachingConfig(BaseModel):
     max_session_tokens: int | None = Field(
         default=None,
         description="Max L2 tokens before truncation (null = no limit)",
+    )
+    truncation_strategy: str = Field(
+        default="recent",
+        pattern="^(recent|important|semantic)$",
+        description="Truncation strategy for session management (semantic deferred to v1.6)",
+    )
+    token_counter: str = Field(
+        default="tiktoken",
+        pattern="^(tiktoken|char_estimate)$",
+        description="Token counting method (tiktoken = accurate, char_estimate = fast approx)",
     )
 
 

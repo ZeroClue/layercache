@@ -528,3 +528,92 @@ async def logs_page(request: Request) -> HTMLResponse | RedirectResponse:
         name="logs.html",
         context={"log_records": records},
     )
+
+
+@router.get("/analytics", response_class=HTMLResponse, response_model=None)
+async def analytics_page(request: Request) -> HTMLResponse | RedirectResponse:
+    """Analytics dashboard page."""
+    if not _auth_check(request):
+        return _redirect_login()
+
+    return templates.TemplateResponse(
+        request=request,
+        name="analytics.html",
+        context={},
+    )
+
+
+@router.get("/api/analytics", response_model=None)
+async def analytics_api(request: Request, hours: int = 24) -> dict[str, Any]:
+    """Analytics API endpoint for chart data.
+
+    Args:
+        hours: Number of hours to look back (default 24).
+
+    Returns:
+        Analytics data including summary, time series, templates, and sessions.
+    """
+    hours = max(1, min(hours, 8760))
+
+    aggregator = getattr(request.app.state, "metrics_aggregator", None)
+    if not aggregator:
+        return {
+            "summary": {
+                "hit_rate": 0.0,
+                "tokens_saved": 0,
+                "avg_latency": 0,
+                "total_requests": 0,
+            },
+            "time_series": [],
+            "templates": [],
+            "sessions": [],
+        }
+
+    try:
+        hit_rate = await aggregator.get_cache_hit_rate(hours)
+        token_savings = await aggregator.get_token_savings(hours)
+
+        hourly_data = await aggregator.get_recent_hourly(limit=hours)
+        time_series = [
+            {
+                "hour": d.hour,
+                "hit_rate": (d.cache_hits / d.total_requests * 100) if d.total_requests > 0 else 0,
+                "total_requests": d.total_requests,
+                "cache_hits": d.cache_hits,
+                "cache_misses": d.cache_misses,
+                "avg_latency": d.avg_latency_ms,
+                "input_tokens": d.total_input_tokens,
+                "output_tokens": d.total_output_tokens,
+                "cache_read_tokens": d.cache_read_tokens,
+            }
+            for d in reversed(hourly_data)
+        ]
+
+        templates = []
+        sessions = []
+
+        return {
+            "summary": {
+                "hit_rate": hit_rate,
+                "tokens_saved": token_savings["input_tokens_saved"],
+                "avg_latency": time_series[-1]["avg_latency"] if time_series else 0,
+                "total_requests": sum(d["total_requests"] for d in time_series),
+            },
+            "time_series": time_series,
+            "templates": templates,
+            "sessions": sessions,
+        }
+    except Exception as e:
+        logger.error("Analytics API failed: %s", e)
+        return {
+            "summary": {
+                "hit_rate": 0.0,
+                "tokens_saved": 0,
+                "avg_latency": 0,
+                "total_requests": 0,
+            },
+            "time_series": [],
+            "templates": [],
+            "sessions": [],
+            "error": str(e),
+        }

@@ -72,6 +72,10 @@ class StratifiedPrompt(BaseModel):
     layers: dict[LayerType, list[StratifiedMessage]] = Field(
         default_factory=lambda: {lt: [] for lt in LayerType}
     )
+    session_id: str | None = Field(
+        default=None,
+        description="Session ID for cache isolation (included in prefix_hash if set)",
+    )
 
     def add_message(
         self,
@@ -115,12 +119,18 @@ class StratifiedPrompt(BaseModel):
         """Generate a SHA-256 hash of the stable prefix (L0 + L1 + L2).
 
         Used as the exact-match key for the semantic cache.
+        If session_id is set, it's included in the hash for session isolation.
         """
         import hashlib
         import json
 
         stable_layers = [LayerType.SYSTEM, LayerType.CONTEXT, LayerType.SESSION]
         prefix_content: list[str] = []
+        
+        # Include session_id in hash if set (for session isolation)
+        if self.session_id:
+            prefix_content.append(f"_session:{self.session_id}")
+        
         for lt in stable_layers:
             for msg in sorted(self.layers[lt], key=lambda m: m.content_hash()):
                 content_str = (
@@ -177,6 +187,11 @@ class LayerCacheRequest(BaseModel):
     lc_layer_hints: dict[int, str] | None = Field(default=None, max_length=512)
     lc_skip_semantic_cache: bool = False
     lc_bypass_cache: bool = False
+    lc_session_id: str | None = Field(
+        default=None,
+        max_length=128,
+        description="Session ID for cache isolation (from X-Session-ID header or auto-generated)",
+    )
 
 
 class CacheEntry(BaseModel):

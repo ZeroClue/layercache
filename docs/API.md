@@ -552,7 +552,7 @@ Check the health status of the LayerCache service.
 ```json
 {
   "status": "healthy",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "semantic_cache": true,
   "semantic_cache_stats": {
     "total_entries": 42,

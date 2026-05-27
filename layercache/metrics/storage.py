@@ -25,7 +25,7 @@ class MetricsDB:
         self.healthy: bool = False
 
     async def initialize(self) -> None:
-        """Open connection, enable WAL, create table."""
+        """Open connection, enable WAL, create tables."""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._db = await aiosqlite.connect(self.db_path)
         self._db.row_factory = aiosqlite.Row
@@ -44,6 +44,30 @@ class MetricsDB:
             await self._db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_ms_ts_name
                 ON metric_snapshots(ts, name)
+            """)
+            await self._db.execute("""
+                CREATE TABLE IF NOT EXISTS metrics_requests (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    session_id TEXT,
+                    model TEXT NOT NULL,
+                    semantic_cache_hit INTEGER DEFAULT 0,
+                    duration_ms REAL,
+                    input_tokens INTEGER,
+                    output_tokens INTEGER,
+                    cache_read_tokens INTEGER,
+                    cache_creation_tokens INTEGER,
+                    template_name TEXT,
+                    enhancements TEXT DEFAULT '[]'
+                )
+            """)
+            await self._db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_mr_created_at
+                ON metrics_requests(created_at)
+            """)
+            await self._db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_mr_session_id
+                ON metrics_requests(session_id)
             """)
             await self._db.commit()
             self.healthy = True
@@ -210,3 +234,65 @@ class MetricsDB:
             await cursor.fetchall()
         except Exception:
             logger.debug("WAL checkpoint skipped", exc_info=True)
+
+    async def insert_request(
+        self,
+        created_at: str,
+        model: str,
+        session_id: str | None = None,
+        semantic_cache_hit: bool = False,
+        duration_ms: float | None = None,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cache_read_tokens: int = 0,
+        cache_creation_tokens: int = 0,
+        template_name: str | None = None,
+        enhancements: list[str] | None = None,
+    ) -> None:
+        """Insert a per-request metrics record.
+
+        Args:
+            created_at: ISO format timestamp (will be normalized to SQLite format).
+            model: Model name used for the request.
+            session_id: Optional session identifier.
+            semantic_cache_hit: Whether semantic cache was hit.
+            duration_ms: Request duration in milliseconds.
+            input_tokens: Input token count.
+            output_tokens: Output token count.
+            cache_read_tokens: Tokens read from provider cache.
+            cache_creation_tokens: Tokens written to provider cache.
+            template_name: Optional template name if used.
+            enhancements: List of enhancement names applied.
+        """
+        if not self.healthy or self._db is None:
+            return
+
+        import json
+
+        # Normalize to SQLite-compatible format (replace T with space)
+        created_at_sql = created_at.replace("T", " ")
+        enhancements_json = json.dumps(enhancements or [])
+
+        await self._db.execute(
+            """
+            INSERT INTO metrics_requests
+            (created_at, session_id, model, semantic_cache_hit, duration_ms,
+             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+             template_name, enhancements)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                created_at_sql,
+                session_id,
+                model,
+                1 if semantic_cache_hit else 0,
+                duration_ms,
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cache_creation_tokens,
+                template_name,
+                enhancements_json,
+            ),
+        )
+        await self._db.commit()

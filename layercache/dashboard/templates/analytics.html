@@ -1,0 +1,453 @@
+{% extends "base.html" %}
+
+{% block title %}Analytics - LayerCache{% endblock %}
+
+{% block content %}
+<div class="analytics-container">
+    <header class="analytics-header">
+        <h1>Cache Analytics</h1>
+        <div class="analytics-controls">
+            <select id="timeRange" onchange="updateTimeRange()">
+                <option value="24">Last 24 hours</option>
+                <option value="168">Last 7 days</option>
+                <option value="720">Last 30 days</option>
+            </select>
+            <button onclick="refreshData()" class="btn-refresh">↻ Refresh</button>
+        </div>
+    </header>
+
+    <!-- Summary Cards -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-icon">📊</div>
+            <div class="stat-content">
+                <div class="stat-label">Cache Hit Rate</div>
+                <div class="stat-value" id="hitRate">--%</div>
+                <div class="stat-trend" id="hitRateTrend"></div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">💾</div>
+            <div class="stat-content">
+                <div class="stat-label">Tokens Saved</div>
+                <div class="stat-value" id="tokensSaved">--</div>
+                <div class="stat-trend" id="tokensSavedTrend"></div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">⚡</div>
+            <div class="stat-content">
+                <div class="stat-label">Avg Latency</div>
+                <div class="stat-value" id="avgLatency">-- ms</div>
+                <div class="stat-trend" id="latencyTrend"></div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">🔢</div>
+            <div class="stat-content">
+                <div class="stat-label">Total Requests</div>
+                <div class="stat-value" id="totalRequests">--</div>
+                <div class="stat-trend" id="requestsTrend"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="charts-grid">
+        <div class="chart-container">
+            <h3>Cache Hit Rate Over Time</h3>
+            <canvas id="hitRateChart"></canvas>
+        </div>
+        <div class="chart-container">
+            <h3>Requests & Cache Hits</h3>
+            <canvas id="requestsChart"></canvas>
+        </div>
+        <div class="chart-container">
+            <h3>Token Usage</h3>
+            <canvas id="tokensChart"></canvas>
+        </div>
+        <div class="chart-container">
+            <h3>Latency Trend</h3>
+            <canvas id="latencyChart"></canvas>
+        </div>
+    </div>
+
+    <!-- Top Templates Table -->
+    <div class="table-container">
+        <h3>Top Templates by Savings</h3>
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Template</th>
+                    <th>Requests</th>
+                    <th>Hit Rate</th>
+                    <th>Tokens Saved</th>
+                    <th>Avg Latency</th>
+                </tr>
+            </thead>
+            <tbody id="templatesTable">
+                <tr><td colspan="5" class="loading">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Session Comparison -->
+    <div class="table-container">
+        <h3>Session Comparison (Top 10)</h3>
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Session ID</th>
+                    <th>Requests</th>
+                    <th>Cache Hits</th>
+                    <th>Tokens Used</th>
+                    <th>Avg Latency</th>
+                </tr>
+            </thead>
+            <tbody id="sessionsTable">
+                <tr><td colspan="5" class="loading">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+let hitRateChart, requestsChart, tokensChart, latencyChart;
+let currentTimeRange = 24;
+
+document.addEventListener('DOMContentLoaded', function() {
+    initCharts();
+    loadAnalytics();
+    // Auto-refresh every 60 seconds
+    setInterval(loadAnalytics, 60000);
+});
+
+function initCharts() {
+    const commonOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                position: 'top',
+            }
+        },
+        scales: {
+            y: {
+                beginAtZero: true
+            }
+        }
+    };
+
+    // Hit Rate Chart
+    const hitRateCtx = document.getElementById('hitRateChart').getContext('2d');
+    hitRateChart = new Chart(hitRateCtx, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Cache Hit Rate (%)',
+                data: [],
+                borderColor: 'rgb(20, 184, 166)',
+                backgroundColor: 'rgba(20, 184, 166, 0.1)',
+                fill: true,
+                tension: 0.4
+            }]
+        },
+        options: commonOptions
+    });
+
+    // Requests Chart
+    const requestsCtx = document.getElementById('requestsChart').getContext('2d');
+    requestsChart = new Chart(requestsCtx, {
+        type: 'bar',
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    label: 'Total Requests',
+                    data: [],
+                    backgroundColor: 'rgba(99, 102, 241, 0.6)',
+                    borderColor: 'rgb(99, 102, 241)',
+                    borderWidth: 1
+                },
+                {
+                    label: 'Cache Hits',
+                    data: [],
+                    backgroundColor: 'rgba(20, 184, 166, 0.6)',
+                    borderColor: 'rgb(20, 184, 166)',
+                    borderWidth: 1
+                }
+            ]
+        },
+        options: commonOptions
+    });
+
+    // Tokens Chart
+    const tokensCtx = document.getElementById('tokensChart').getContext('2d');
+    tokensChart = new Chart(tokensCtx, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    label: 'Input Tokens',
+                    data: [],
+                    borderColor: 'rgb(236, 72, 153)',
+                    backgroundColor: 'rgba(236, 72, 153, 0.1)',
+                    fill: true,
+                    tension: 0.4
+                },
+                {
+                    label: 'Cache Read Tokens',
+                    data: [],
+                    borderColor: 'rgb(20, 184, 166)',
+                    backgroundColor: 'rgba(20, 184, 166, 0.1)',
+                    fill: true,
+                    tension: 0.4
+                }
+            ]
+        },
+        options: commonOptions
+    });
+
+    // Latency Chart
+    const latencyCtx = document.getElementById('latencyChart').getContext('2d');
+    latencyChart = new Chart(latencyCtx, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Avg Latency (ms)',
+                data: [],
+                borderColor: 'rgb(251, 146, 60)',
+                backgroundColor: 'rgba(251, 146, 60, 0.1)',
+                fill: true,
+                tension: 0.4
+            }]
+        },
+        options: commonOptions
+    });
+}
+
+async function loadAnalytics() {
+    try {
+        const response = await fetch(`/dashboard/api/analytics?hours=${currentTimeRange}`);
+        const data = await response.json();
+        
+        updateSummaryCards(data.summary);
+        updateCharts(data.time_series);
+        updateTables(data.templates, data.sessions);
+    } catch (error) {
+        console.error('Failed to load analytics:', error);
+        showToast('Failed to load analytics data', 'error');
+    }
+}
+
+function updateSummaryCards(summary) {
+    document.getElementById('hitRate').textContent = `${summary.hit_rate.toFixed(1)}%`;
+    document.getElementById('tokensSaved').textContent = formatNumber(summary.tokens_saved);
+    document.getElementById('avgLatency').textContent = `${summary.avg_latency.toFixed(0)} ms`;
+    document.getElementById('totalRequests').textContent = formatNumber(summary.total_requests);
+}
+
+function updateCharts(timeSeries) {
+    // Hit Rate Chart
+    hitRateChart.data.labels = timeSeries.map(d => d.hour);
+    hitRateChart.data.datasets[0].data = timeSeries.map(d => d.hit_rate);
+    hitRateChart.update();
+
+    // Requests Chart
+    requestsChart.data.labels = timeSeries.map(d => d.hour);
+    requestsChart.data.datasets[0].data = timeSeries.map(d => d.total_requests);
+    requestsChart.data.datasets[1].data = timeSeries.map(d => d.cache_hits);
+    requestsChart.update();
+
+    // Tokens Chart
+    tokensChart.data.labels = timeSeries.map(d => d.hour);
+    tokensChart.data.datasets[0].data = timeSeries.map(d => d.input_tokens);
+    tokensChart.data.datasets[1].data = timeSeries.map(d => d.cache_read_tokens);
+    tokensChart.update();
+
+    // Latency Chart
+    latencyChart.data.labels = timeSeries.map(d => d.hour);
+    latencyChart.data.datasets[0].data = timeSeries.map(d => d.avg_latency);
+    latencyChart.update();
+}
+
+function updateTables(templates, sessions) {
+    // Templates table
+    const templatesTbody = document.getElementById('templatesTable');
+    if (templates.length === 0) {
+        templatesTbody.innerHTML = '<tr><td colspan="5">No template data</td></tr>';
+    } else {
+        templatesTbody.innerHTML = templates.map(t => `
+            <tr>
+                <td>${t.name || '—'}</td>
+                <td>${formatNumber(t.requests)}</td>
+                <td>${t.hit_rate.toFixed(1)}%</td>
+                <td>${formatNumber(t.tokens_saved)}</td>
+                <td>${t.avg_latency.toFixed(0)} ms</td>
+            </tr>
+        `).join('');
+    }
+
+    // Sessions table
+    const sessionsTbody = document.getElementById('sessionsTable');
+    if (sessions.length === 0) {
+        sessionsTbody.innerHTML = '<tr><td colspan="5">No session data</td></tr>';
+    } else {
+        sessionsTbody.innerHTML = sessions.map(s => `
+            <tr>
+                <td><code>${s.id.substring(0, 8)}...</code></td>
+                <td>${formatNumber(s.requests)}</td>
+                <td>${s.cache_hits}</td>
+                <td>${formatNumber(s.tokens_used)}</td>
+                <td>${s.avg_latency.toFixed(0)} ms</td>
+            </tr>
+        `).join('');
+    }
+}
+
+function updateTimeRange() {
+    currentTimeRange = parseInt(document.getElementById('timeRange').value);
+    loadAnalytics();
+}
+
+function refreshData() {
+    loadAnalytics();
+    showToast('Analytics refreshed', 'success');
+}
+
+function formatNumber(num) {
+    if (num >= 1000000) {
+        return (num / 1000000).toFixed(1) + 'M';
+    } else if (num >= 1000) {
+        return (num / 1000).toFixed(1) + 'K';
+    }
+    return num.toString();
+}
+</script>
+
+<style>
+.analytics-container {
+    padding: 2rem;
+    max-width: 1600px;
+    margin: 0 auto;
+}
+
+.analytics-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2rem;
+}
+
+.analytics-controls {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+}
+
+.analytics-controls select {
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+}
+
+.btn-refresh {
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-refresh:hover {
+    background: var(--accent);
+    color: white;
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+.charts-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+.chart-container {
+    background: var(--surface);
+    padding: 1.5rem;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    height: 300px;
+}
+
+.chart-container h3 {
+    margin: 0 0 1rem 0;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+
+.table-container {
+    background: var(--surface);
+    padding: 1.5rem;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    margin-bottom: 1.5rem;
+}
+
+.table-container h3 {
+    margin: 0 0 1rem 0;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.data-table th,
+.data-table td {
+    padding: 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+
+.data-table th {
+    font-weight: 600;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.data-table tr:hover {
+    background: var(--surface-alt);
+}
+
+.loading {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 2rem;
+}
+
+code {
+    background: var(--surface-alt);
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85em;
+}
+</style>
+{% endblock %}
