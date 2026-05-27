@@ -14,7 +14,9 @@ from layercache.config import LayerCacheSettings
 class TestReloadConfig:
     """Unit tests for the reload_config() hot-reload function."""
 
-    def test_reload_returns_ok_with_valid_yaml(self, monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory) -> None:
+    def test_reload_returns_ok_with_valid_yaml(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory
+    ) -> None:
         from layercache.main import reload_config
 
         config_path = tmp_path / "layercache.yaml"
@@ -25,7 +27,9 @@ class TestReloadConfig:
         assert result["status"] == "ok"
         assert "warnings" in result
 
-    def test_reload_returns_error_when_file_missing(self, monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory) -> None:
+    def test_reload_returns_error_when_file_missing(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory
+    ) -> None:
         from layercache.main import reload_config
 
         monkeypatch.chdir(tmp_path)
@@ -33,7 +37,9 @@ class TestReloadConfig:
         assert result["status"] == "error"
         assert "not found" in result["error"]
 
-    def test_reload_returns_error_on_invalid_yaml(self, monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory) -> None:
+    def test_reload_returns_error_on_invalid_yaml(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory
+    ) -> None:
         from layercache.main import reload_config
 
         config_path = tmp_path / "layercache.yaml"
@@ -44,7 +50,9 @@ class TestReloadConfig:
         assert result["status"] == "error"
         assert "YAML parsing failed" in result["error"]
 
-    def test_reload_updates_global_settings(self, monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory) -> None:
+    def test_reload_updates_global_settings(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory
+    ) -> None:
         import layercache.main as m
 
         config_path = tmp_path / "layercache.yaml"
@@ -57,7 +65,9 @@ class TestReloadConfig:
         assert m._settings is not None
         assert m._settings.proxy.log_level == "debug"
 
-    def test_reload_applies_log_level(self, monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory) -> None:
+    def test_reload_applies_log_level(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory
+    ) -> None:
         import logging
 
         import layercache.main as m
@@ -73,7 +83,9 @@ class TestReloadConfig:
         m.reload_config()
         assert logger.level <= logging.DEBUG
 
-    def test_reload_warns_on_semantic_cache_change(self, monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory) -> None:
+    def test_reload_warns_on_semantic_cache_change(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory
+    ) -> None:
         import layercache.main as m
 
         config_path = tmp_path / "layercache.yaml"
@@ -82,14 +94,18 @@ class TestReloadConfig:
         )
         monkeypatch.chdir(tmp_path)
 
-        m._settings = LayerCacheSettings.model_validate({
-            "caching": {"semantic": {"enabled": False}},
-        })
+        m._settings = LayerCacheSettings.model_validate(
+            {
+                "caching": {"semantic": {"enabled": False}},
+            }
+        )
         result = m.reload_config()
         assert result["status"] == "ok"
         assert any("Semantic cache" in w for w in result["warnings"])
 
-    def test_reload_handles_stale_global_settings(self, monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory) -> None:
+    def test_reload_handles_stale_global_settings(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory
+    ) -> None:
         import layercache.main as m
 
         config_path = tmp_path / "layercache.yaml"
@@ -101,7 +117,9 @@ class TestReloadConfig:
         assert result["status"] == "ok"
         assert m._settings is not None
 
-    def test_reload_missing_proxy_key(self, monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory) -> None:
+    def test_reload_missing_proxy_key(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory
+    ) -> None:
         from layercache.main import reload_config
 
         config_path = tmp_path / "layercache.yaml"
@@ -159,7 +177,9 @@ class TestConfigRoutes:
         self.config_path.write_text("proxy:\n  log_level: info\n")
 
         mtime = os.stat(str(self.config_path)).st_mtime - 10
-        response = self._save_post({"config_yaml": "proxy:\n  log_level: debug\n", "mtime": str(mtime)})
+        response = self._save_post(
+            {"config_yaml": "proxy:\n  log_level: debug\n", "mtime": str(mtime)}
+        )
         assert response.status_code == 409
         assert "modified by another process" in response.text
 
@@ -212,7 +232,7 @@ class TestConfigRoutes:
 
     def test_config_save_rate_limiting(self) -> None:
         self.config_path.write_text("proxy:\n  log_level: info\n")
-        from layercache.dashboard.router import _rate_limit_bucket, _RATE_LIMIT_MAX
+        from layercache.dashboard.router import _RATE_LIMIT_MAX, _rate_limit_bucket
 
         _rate_limit_bucket.clear()
         for _ in range(_RATE_LIMIT_MAX):

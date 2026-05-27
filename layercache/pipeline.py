@@ -21,13 +21,16 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from .adapters import detect_provider, get_adapter
+from .cache.probation import ProbationTracker
 from .cache.semantic import SemanticCache
+from .cache.tier import CacheTierHierarchy
+from .cache.validator import IntentHashValidator
 from .canonicalizer import Canonicalizer
 from .config import ProvidersConfig
 from .enhancements.base import EnhancementRegistry
 from .metrics.collector import MetricsCollector, RequestTimer
 from .metrics.storage import MetricsDB
-from .models import LayerCacheRequest, LayerType, StratifiedPrompt
+from .models import LayerCacheRequest, StratifiedPrompt
 from .registry.prompt_registry import PromptRegistry
 from .stratifier import Stratifier
 from .truncation import TokenCounter, TruncationStrategy, Truncator
@@ -82,6 +85,7 @@ class RequestPipeline:
         max_session_tokens: int | None = None,
         providers_config: ProvidersConfig | None = None,
         truncation_strategy: str = "recent",
+        litellm_model: str = "gpt-4o",
     ) -> None:
         self.stratifier = stratifier
         self.canonicalizer = canonicalizer
@@ -97,11 +101,44 @@ class RequestPipeline:
 
         # Truncation
         strategy = TruncationStrategy(truncation_strategy.lower())
-        self._truncator = Truncator(strategy=strategy, token_counter=TokenCounter())
+        self._truncator = Truncator(
+            strategy=strategy, token_counter=TokenCounter(), model_name=litellm_model
+        )
 
         # P2: throttled prefix-hash warning set
         self._prefix_warning_throttle: dict[str, float] = {}
         self._prefix_warning_throttle_max = 10000
+
+        # Multi-tier cache components (Phase 2.1b)
+        self._tier_hierarchy = CacheTierHierarchy()
+        self._validator = IntentHashValidator()
+        self._probation_tracker: ProbationTracker | None = None
+        self._multi_tier_enabled = True
+
+        # Initialize probation tracker if semantic cache is enabled
+        if semantic_cache and semantic_cache.db_path:
+            self._probation_tracker = ProbationTracker(db_path=semantic_cache.db_path)
+
+    async def initialize(self) -> None:
+        """Initialize async components (probation tracker)."""
+        if self._probation_tracker:
+            await self._probation_tracker.initialize()
+
+    def _truncate_session(
+        self,
+        prompt: StratifiedPrompt,
+        model: str,
+    ) -> None:
+        """Truncate L2 session messages to fit within token budget.
+
+        Args:
+            prompt: Prompt to truncate (modified in place).
+            model: Model name for token counting.
+        """
+        if self._max_session_tokens is None:
+            return
+
+        self._truncator.truncate(prompt, self._max_session_tokens)
 
     # ------------------------------------------------------------------
     # P2: Prefix threshold warning
@@ -124,36 +161,24 @@ class RequestPipeline:
         if now - last_warn < 3600:
             return  # already warned within the hour
 
-        import litellm
+        # Use the new stable_prefix_tokens method for accurate counting
+        prefix_tokens = prompt.stable_prefix_tokens()
 
-        parts: list[str] = []
-        for layer_type in (LayerType.SYSTEM, LayerType.CONTEXT, LayerType.SESSION):
-            for msg in sorted(prompt.layers[layer_type], key=lambda m: m.content_hash()):
-                content = msg.content if isinstance(msg.content, str) else str(msg.content)
-                parts.append(content)
-        prefix_text = "\n".join(parts)
-        if not prefix_text.strip():
-            return
+        if prefix_tokens >= 1024:
+            return  # prefix is cache-eligible
 
-        try:
-            raw = litellm.token_counter(model=model, text=prefix_text)
-            estimated = int(raw) if raw is not None else len(prefix_text) // 2
-        except Exception:
-            estimated = len(prefix_text) // 2  # CJK-safe fallback (~2 chars/token)
+        self._prefix_warning_throttle[prefix_hash] = now
+        if len(self._prefix_warning_throttle) > self._prefix_warning_throttle_max:
+            cutoff = now - 7200
+            for k in list(self._prefix_warning_throttle):
+                if self._prefix_warning_throttle[k] < cutoff:
+                    del self._prefix_warning_throttle[k]
 
-        if estimated < 1024:
-            self._prefix_warning_throttle[prefix_hash] = now
-            if len(self._prefix_warning_throttle) > self._prefix_warning_throttle_max:
-                cutoff = now - 7200
-                for k in list(self._prefix_warning_throttle):
-                    if self._prefix_warning_throttle[k] < cutoff:
-                        del self._prefix_warning_throttle[k]
-            logger.info(
-                "Stable prefix (L0+L1+L2) ~%d tokens (model=%s) — below ~1024 token "
-                "caching threshold. Add more content to L0/L1 or expect low cache hit rates.",
-                estimated,
-                model,
-            )
+        logger.info(
+            "Stable prefix below cache threshold: %d tokens (need ≥1,024 for provider caching). "
+            "Add static content to L0-L2 (system, tools, templates).",
+            prefix_tokens,
+        )
 
     # ------------------------------------------------------------------
 
@@ -175,7 +200,8 @@ class RequestPipeline:
         timer.__enter__()
 
         try:
-            # Stage 1: Semantic Cache Lookup
+            # Stage 1: Semantic Cache Lookup (with multi-tier support)
+            cache_tier_used: str | None = None
             if (
                 self.semantic_cache
                 and not request.lc_skip_semantic_cache
@@ -196,13 +222,45 @@ class RequestPipeline:
 
                 cache_entry = await self.semantic_cache.lookup(lookup_prompt, request.model)
                 if cache_entry:
-                    self.metrics.record_semantic_cache_hit()
-                    logger.info(
-                        "Semantic cache HIT for model=%s (prefix=%s...)",
-                        request.model,
-                        cache_entry.prefix_hash[:12],
-                    )
-                    return cache_entry.response_payload
+                    # Multi-tier validation (Phase 2.1b)
+                    if self._multi_tier_enabled and self._validator:
+                        query_text = lookup_prompt.get_user_query()
+                        if query_text:
+                            validation_result = self._validator.validate(
+                                cache_entry.query_text,
+                                query_text,
+                            )
+
+                            # Log validation latency
+                            if validation_result.latency_ms > 50:
+                                logger.warning(
+                                    "Cache validation exceeded latency budget: %.2fms",
+                                    validation_result.latency_ms,
+                                )
+
+                            # If validation fails, treat as cache miss
+                            if not validation_result.is_match:
+                                logger.info(
+                                    "Cache validation failed, falling back to inference",
+                                )
+                                cache_entry = None
+                                cache_tier_used = None
+                            else:
+                                cache_tier_used = "semantic"
+
+                    if cache_entry:
+                        self.metrics.record_semantic_cache_hit()
+                        logger.info(
+                            "Semantic cache HIT for model=%s (prefix=%s...)",
+                            request.model,
+                            cache_entry.prefix_hash[:12],
+                        )
+
+                        # Track probation on cache hit (Phase 2.1b)
+                        if self._multi_tier_enabled and self._probation_tracker and cache_entry.id:
+                            await self._probation_tracker.increment_probation_count(cache_entry.id)
+
+                        return cache_entry.response_payload
 
                 self.metrics.record_semantic_cache_miss()
 
@@ -222,6 +280,7 @@ class RequestPipeline:
 
             # Stage 3c: Prefix threshold warning (P2)
             self._check_prefix_threshold(prompt, request.model)
+            prefix_tokens = prompt.stable_prefix_tokens()
 
             # Stage 4: Enhancement Injection (L3 only)
             if request.lc_enhancements:
@@ -257,7 +316,8 @@ class RequestPipeline:
                         created_at=datetime.now(UTC).isoformat(),
                         model=request.model,
                         session_id=request.lc_session_id,
-                        semantic_cache_hit=False,
+                        semantic_cache_hit=cache_tier_used is not None,
+                        cache_tier=cache_tier_used,
                         duration_ms=timer.duration * 1000,
                         input_tokens=cache_metrics.get("input_tokens", 0),
                         output_tokens=cache_metrics.get("output_tokens", 0),
@@ -277,12 +337,21 @@ class RequestPipeline:
                 and request.lc_cache_ttl > 0
             ):
                 try:
-                    await self.semantic_cache.store(
+                    entry_id = await self.semantic_cache.store(
                         prompt,
                         response,
                         request.model,
                         ttl=request.lc_cache_ttl,
                     )
+
+                    # Track new entry in probation (Phase 2.1b)
+                    if self._multi_tier_enabled and self._probation_tracker and entry_id:
+                        await self._probation_tracker.increment_probation_count(entry_id)
+                        logger.debug(
+                            "New cache entry in probation (id=%s, prefix=%s...)",
+                            entry_id[:12],
+                            prompt.prefix_hash()[:12],
+                        )
                 except Exception as e:
                     logger.warning("Failed to store in semantic cache: %s", e)
 
@@ -301,6 +370,10 @@ class RequestPipeline:
                 cache_metrics.get("cache_read_input_tokens", 0),
                 timer.duration,
             )
+
+            # Add stable prefix metadata to response (Phase 1.1)
+            response["lc_prefix_hash"] = prompt.prefix_hash()
+            response["lc_prefix_tokens"] = prefix_tokens
 
             return response
 
@@ -346,11 +419,34 @@ class RequestPipeline:
 
                 cache_entry = await self.semantic_cache.lookup(lookup_prompt, request.model)
                 if cache_entry:
-                    self.metrics.record_semantic_cache_hit()
-                    logger.info("Semantic cache HIT for streaming request")
-                    async for chunk in self._stream_cached_response(cache_entry.response_payload):
-                        yield chunk
-                    return
+                    # Multi-tier validation (Phase 2.1b)
+                    if self._multi_tier_enabled and self._validator:
+                        query_text = lookup_prompt.get_user_query()
+                        if query_text:
+                            validation_result = self._validator.validate(
+                                cache_entry.query_text,
+                                query_text,
+                            )
+
+                            if not validation_result.is_match:
+                                logger.info(
+                                    "Cache validation failed for streaming request",
+                                )
+                                cache_entry = None
+
+                    if cache_entry:
+                        self.metrics.record_semantic_cache_hit()
+                        logger.info("Semantic cache HIT for streaming request")
+
+                        # Track probation on cache hit (Phase 2.1b)
+                        if self._multi_tier_enabled and self._probation_tracker and cache_entry.id:
+                            await self._probation_tracker.increment_probation_count(cache_entry.id)
+
+                        async for chunk in self._stream_cached_response(
+                            cache_entry.response_payload
+                        ):
+                            yield chunk
+                        return
 
                 self.metrics.record_semantic_cache_miss()
 

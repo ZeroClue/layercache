@@ -3,7 +3,7 @@
 import pytest
 
 from layercache.models import LayerType, StratifiedMessage, StratifiedPrompt
-from layercache.truncation import TokenCounter, Truncator, TruncationStrategy
+from layercache.truncation import TokenCounter, TruncationStrategy, Truncator
 
 
 class TestTokenCounter:
@@ -194,3 +194,48 @@ class TestSessionIsolationWithTruncation:
 
         # Hashes should be same
         assert prompt1.prefix_hash() == prompt2.prefix_hash()
+
+
+class TestTruncateWithLiteLLM:
+    """Test LiteLLM trim_messages integration."""
+
+    def test_trim_strategy_exists(self):
+        """TRIM strategy enum value exists."""
+        assert hasattr(TruncationStrategy, "TRIM")
+        assert TruncationStrategy.TRIM.value == "trim"
+
+    def test_trim_truncator_instantiates(self):
+        """TRIM strategy Truncator can be instantiated."""
+        truncator = Truncator(strategy=TruncationStrategy.TRIM, model_name="gpt-4o")
+        assert truncator.strategy == TruncationStrategy.TRIM
+        assert truncator._model_name == "gpt-4o"
+
+    def test_trim_with_real_litellm(self):
+        """TRIM strategy works with real LiteLLM (integration test)."""
+        # This is an integration test that uses real LiteLLM
+        # Skip if LiteLLM not available
+        import layercache.truncation as trunc_module
+
+        if not trunc_module.LITELLM_AVAILABLE:
+            pytest.skip("LiteLLM not available")
+
+        prompt = StratifiedPrompt(session_id="test")
+        # Add messages with long content
+        for i in range(3):
+            prompt.add_message(LayerType.SESSION, "user", f"Message {i}" * 100)
+            prompt.add_message(LayerType.SESSION, "assistant", f"Response {i}" * 100)
+
+        # Count original tokens
+        original_tokens = sum(len(msg.content) for msg in prompt.layers[LayerType.SESSION])
+
+        # Create truncator with trim strategy
+        truncator = Truncator(strategy=TruncationStrategy.TRIM, model_name="gpt-4o")
+        result = truncator.truncate(prompt, max_tokens=500)
+
+        # Count trimmed tokens
+        trimmed_tokens = sum(len(msg.content) for msg in result.layers[LayerType.SESSION])
+
+        # Verify content was trimmed (LiteLLM trims content, not message count)
+        assert trimmed_tokens < original_tokens
+        # Verify messages still exist
+        assert len(result.layers[LayerType.SESSION]) > 0

@@ -86,6 +86,35 @@ class ProvidersConfig(RootModel[dict[str, ProviderConfig]]):
         return "openai"
 
 
+class MultiTierConfig(BaseModel):
+    """Multi-tier caching configuration."""
+
+    enabled: bool = Field(
+        default=True,
+        description="Enable multi-tier cache hierarchy (semantic → prefix → inference)",
+    )
+    validation_latency_budget_ms: int = Field(
+        default=50,
+        ge=1,
+        description="Maximum validation latency budget in milliseconds (p95)",
+    )
+    probation_threshold: int = Field(
+        default=10,
+        ge=1,
+        description="Number of successful validations before promotion from probation",
+    )
+    probation_auto_promotion_seconds: int = Field(
+        default=3600,
+        ge=60,
+        description="Seconds before auto-promotion from probation regardless of count",
+    )
+    max_probation_entries: int = Field(
+        default=1000,
+        ge=100,
+        description="Maximum entries to keep in probation (LRU eviction)",
+    )
+
+
 class SemanticCacheConfig(BaseModel):
     """Semantic cache configuration."""
 
@@ -130,6 +159,10 @@ class SemanticCacheConfig(BaseModel):
         default=True,
         description="Auto-generate session ID if not provided by client",
     )
+    multi_tier: MultiTierConfig = Field(
+        default_factory=MultiTierConfig,
+        description="Multi-tier caching hierarchy settings",
+    )
 
 
 class MetricsConfig(BaseModel):
@@ -163,13 +196,17 @@ class CachingConfig(BaseModel):
     )
     truncation_strategy: str = Field(
         default="recent",
-        pattern="^(recent|important|semantic)$",
+        pattern="^(recent|important|trim|semantic)$",
         description="Truncation strategy for session management (semantic deferred to v1.6)",
     )
     token_counter: str = Field(
         default="tiktoken",
         pattern="^(tiktoken|char_estimate)$",
         description="Token counting method (tiktoken = accurate, char_estimate = fast approx)",
+    )
+    litellm_model: str = Field(
+        default="gpt-4o",
+        description="Model for LiteLLM trim_messages (trim strategy)",
     )
 
 

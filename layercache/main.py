@@ -241,6 +241,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         max_session_tokens=_settings.caching.max_session_tokens,
         providers_config=_settings.providers,
         truncation_strategy=_settings.caching.truncation_strategy,
+        litellm_model=_settings.caching.litellm_model,
     )
 
     # Start background metrics snapshot task

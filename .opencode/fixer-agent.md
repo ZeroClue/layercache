@@ -417,6 +417,30 @@ Before submitting a fix:
 
 ---
 
+## Integration with Skills
+
+This agent leverages the following opencode skills:
+
+- **`test-driven-development`**: Core workflow — write failing test first, implement fix, verify. Use this skill's TDD loop for all bug fixes.
+- **`systematic-debugging`**: When root cause is unclear, use this skill's debugging workflow before implementing fixes.
+- **`verification-before-completion`**: After fix implementation, run full verification (tests, lint, typecheck) before submitting.
+
+**Workflow:**
+```
+Review findings → TDD (skill) → Fix implementation → Verification (skill) → Submit
+```
+
+### TDD Integration
+
+When fixing bugs, always use the TDD skill workflow:
+
+1. **RED**: Write failing test that reproduces the bug
+2. **GREEN**: Implement minimal fix to make test pass
+3. **REFACTOR**: Clean up code while keeping tests green
+4. **VERIFY**: Run full test suite + lint + typecheck
+
+---
+
 ## Integration with Review Agent
 
 ### Workflow
@@ -434,37 +458,82 @@ graph LR
     G -->|No| B
 ```
 
-### Fix Response Format
+---
 
-After implementing a fix, document it:
+## Handoff Protocol
+
+### To Orchestrator (Required After Every Fix)
+
+After completing a fix, provide:
 
 ```markdown
-## Fix Summary
+## Fix Summary (For Orchestrator)
 
-**Issue:** [From review]
+**Issues Fixed:** [N issues from review]
+1. [Issue 1 — file:line]
+2. [Issue 2 — file:line]
 
-**Root Cause:** [What was actually wrong]
-
-**Changes Made:**
-| File | Change | Lines |
-|------|--------|-------|
-| `path/to/file.py` | [Description] | [Line numbers] |
+**Files Changed:**
+| File | Lines Changed | What Changed |
+|------|---------------|--------------|
+| `path/to/file.py` | +N/-M | [Description] |
 
 **Tests Added:**
-- `tests/test_file.py::test_case_1` - [What it tests]
-- `tests/test_file.py::test_case_2` - [What it tests]
+- [Test file]::[test_name] — [What it tests]
+- [Test file]::[test_name] — [What it tests]
 
-**Migration Required:** [Yes/No + details]
-
-**Verification:**
+**Verification Results:**
 ```bash
-pytest tests/test_file.py -v  # All pass
-ruff check layercache/        # Clean
-mypy layercache/              # Clean
+# Paste actual output from:
+pytest tests/ -x --tb=short  # [PASS/FAIL]
+ruff check layercache/       # [CLEAN/ISSUES]
+mypy layercache/             # [CLEAN/ISSUES]
 ```
 
-**Risk Assessment:** [Low/Medium/High] - [Why]
+**Risk Assessment:** [LOW/MEDIUM/HIGH] — [1 sentence why]
+
+**Ready for:**
+- [ ] Review Agent verification
+- [ ] Merge (if no review required)
+- [ ] Escalation (if issues encountered)
 ```
+
+### On Completion
+
+After completing your fix:
+
+1. Call `on_agent_complete()` with results
+2. This will auto-save workflow state
+3. Next agent will be auto-spawned (Review Agent)
+
+```python
+from layercache.workflow import on_agent_complete
+
+on_agent_complete(
+    workflow_id="v1.6-prompt-context-engineering",
+    agent_name="Fixer Agent",
+    phase_name="Phase 1.4: OpenAI Cache Metrics",
+    tests_passing=202,
+    notes="Implementation complete, ready for review"
+)
+```
+
+### To Review Agent (When Fix Complete)
+
+After fixing issues, automatically trigger Review Agent with:
+1. Link to original review document
+2. List of fixed issues with file:line references
+3. Test results showing no regressions
+4. Request: "Verify all blocking issues are resolved"
+
+### Escalation Triggers
+
+Escalate to orchestrator (not Review Agent) when:
+- Fix requires breaking API changes (needs migration plan)
+- Fix requires schema changes (needs database migration)
+- Fix takes >2 hours (needs scope adjustment)
+- Fix conflicts with existing tests (needs test strategy decision)
+- Root cause is unclear after 30 min debugging (needs systematic-debugging skill)
 
 ---
 

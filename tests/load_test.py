@@ -5,7 +5,7 @@ Uses aiohttp for concurrent requests.
 
 Test scenarios:
 - Health endpoint: Basic availability
-- Cache metrics: Metrics endpoint performance  
+- Cache metrics: Metrics endpoint performance
 - Chat completions: Main proxy endpoint (requires API key)
 
 Metrics collected:
@@ -18,10 +18,9 @@ import argparse
 import asyncio
 import json
 import statistics
-import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
 
 import aiohttp
 
@@ -151,7 +150,7 @@ class LoadTester:
                     status_code=response.status,
                     error=None if success else f"HTTP {response.status}",
                 )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             latency_ms = (time.perf_counter() - start_time) * 1000
             return RequestResult(
                 latency_ms=latency_ms,
@@ -224,6 +223,7 @@ class LoadTester:
         connector = aiohttp.TCPConnector(limit=concurrent_users * 2, ttl_dns_cache=300)
 
         async with aiohttp.ClientSession(connector=connector) as session:
+
             async def run_with_timeout():
                 workers = [
                     asyncio.create_task(
@@ -252,7 +252,7 @@ class LoadTester:
 
             try:
                 await asyncio.wait_for(run_with_timeout(), timeout=duration_seconds + 10)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 stop_event.set()
 
         return results
@@ -319,7 +319,7 @@ def print_ascii_chart(results: list[TestResults], metric: str = "p95") -> None:
 
 def print_throughput_chart(results: list[TestResults]) -> None:
     """Print ASCII bar chart for throughput."""
-    print(f"\nTHROUGHPUT BY SCENARIO (req/s)")
+    print("\nTHROUGHPUT BY SCENARIO (req/s)")
     print("-" * 70)
 
     max_value = max((r.throughput for r in results), default=1)
@@ -358,7 +358,7 @@ async def run_load_tests(args) -> list[TestResults]:
         print(f"\n>>> Testing with {num_users} concurrent users")
 
         if not args.skip_health:
-            print(f"  - Running /health endpoint test...")
+            print("  - Running /health endpoint test...")
             result = await tester.run_scenario(
                 scenario_name="health",
                 concurrent_users=num_users,
@@ -366,11 +366,13 @@ async def run_load_tests(args) -> list[TestResults]:
                 request_func=lambda s: tester._make_request(s, "GET", "/health"),
             )
             all_results.append(result)
-            print(f"    Completed: {result.total_requests} requests, "
-                  f"p95={result.p95:.2f}ms, throughput={result.throughput:.2f} req/s")
+            print(
+                f"    Completed: {result.total_requests} requests, "
+                f"p95={result.p95:.2f}ms, throughput={result.throughput:.2f} req/s"
+            )
 
         if not args.skip_metrics:
-            print(f"  - Running /v1/cache/metrics endpoint test...")
+            print("  - Running /v1/cache/metrics endpoint test...")
             result = await tester.run_scenario(
                 scenario_name="cache_metrics",
                 concurrent_users=num_users,
@@ -378,11 +380,13 @@ async def run_load_tests(args) -> list[TestResults]:
                 request_func=lambda s: tester._make_request(s, "GET", "/v1/cache/metrics"),
             )
             all_results.append(result)
-            print(f"    Completed: {result.total_requests} requests, "
-                  f"p95={result.p95:.2f}ms, throughput={result.throughput:.2f} req/s")
+            print(
+                f"    Completed: {result.total_requests} requests, "
+                f"p95={result.p95:.2f}ms, throughput={result.throughput:.2f} req/s"
+            )
 
         if not args.skip_prometheus:
-            print(f"  - Running /metrics (Prometheus) endpoint test...")
+            print("  - Running /metrics (Prometheus) endpoint test...")
             result = await tester.run_scenario(
                 scenario_name="prometheus_metrics",
                 concurrent_users=num_users,
@@ -390,12 +394,14 @@ async def run_load_tests(args) -> list[TestResults]:
                 request_func=lambda s: tester._make_request(s, "GET", "/metrics"),
             )
             all_results.append(result)
-            print(f"    Completed: {result.total_requests} requests, "
-                  f"p95={result.p95:.2f}ms, throughput={result.throughput:.2f} req/s")
+            print(
+                f"    Completed: {result.total_requests} requests, "
+                f"p95={result.p95:.2f}ms, throughput={result.throughput:.2f} req/s"
+            )
 
         if not args.skip_chat and args.api_key:
-            print(f"  - Running /v1/chat/completions endpoint test...")
-            
+            print("  - Running /v1/chat/completions endpoint test...")
+
             def chat_request(session):
                 payload = {
                     "model": args.model,
@@ -403,10 +409,9 @@ async def run_load_tests(args) -> list[TestResults]:
                     "max_tokens": 10,
                 }
                 return tester._make_request(
-                    session, "POST", "/v1/chat/completions",
-                    payload=payload, include_auth=True
+                    session, "POST", "/v1/chat/completions", payload=payload, include_auth=True
                 )
-            
+
             result = await tester.run_scenario(
                 scenario_name="chat_completions",
                 concurrent_users=num_users,
@@ -414,8 +419,10 @@ async def run_load_tests(args) -> list[TestResults]:
                 request_func=chat_request,
             )
             all_results.append(result)
-            print(f"    Completed: {result.total_requests} requests, "
-                  f"p95={result.p95:.2f}ms, throughput={result.throughput:.2f} req/s")
+            print(
+                f"    Completed: {result.total_requests} requests, "
+                f"p95={result.p95:.2f}ms, throughput={result.throughput:.2f} req/s"
+            )
 
     return all_results
 

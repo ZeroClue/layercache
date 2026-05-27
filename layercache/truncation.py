@@ -5,6 +5,7 @@ This module provides multiple truncation strategies:
 
 - `recent`: Keep last N messages that fit budget (default)
 - `important`: Score messages by importance, drop lowest scores
+- `trim`: Use LiteLLM's trim_messages for model-aware trimming
 - `semantic`: Embed messages, drop least similar to current query (v1.6)
 
 Truncation happens BEFORE cache lookup, so truncated prompts have their own
@@ -22,12 +23,22 @@ from .models import LayerType, StratifiedMessage, StratifiedPrompt
 
 logger = logging.getLogger(__name__)
 
+# LiteLLM import for trim_messages (optional dependency)
+try:
+    from litellm.utils import trim_messages
+
+    LITELLM_AVAILABLE = True
+except ImportError:
+    trim_messages = None  # type: ignore
+    LITELLM_AVAILABLE = False
+
 
 class TruncationStrategy(StrEnum):
     """Available truncation strategies."""
 
     RECENT = "recent"
     IMPORTANT = "important"
+    TRIM = "trim"
     SEMANTIC = "semantic"  # Deferred to v1.6
 
 
@@ -89,15 +100,18 @@ class Truncator:
         self,
         strategy: TruncationStrategy = TruncationStrategy.RECENT,
         token_counter: TokenCounter | None = None,
+        model_name: str | None = None,
     ) -> None:
         """Initialize truncator.
 
         Args:
             strategy: Truncation strategy to use.
             token_counter: Token counter instance (creates default if None).
+            model_name: Model name for LiteLLM token counting (required for TRIM strategy).
         """
         self.strategy = strategy
         self._token_counter = token_counter or TokenCounter()
+        self._model_name = model_name or "gpt-4o"  # Default for trim strategy
 
     def truncate(
         self,
@@ -138,6 +152,8 @@ class Truncator:
             kept = self._truncate_recent(l2_messages, max_tokens)
         elif self.strategy == TruncationStrategy.IMPORTANT:
             kept = self._truncate_important(l2_messages, max_tokens)
+        elif self.strategy == TruncationStrategy.TRIM:
+            kept = self._truncate_with_litellm(l2_messages, max_tokens)
         elif self.strategy == TruncationStrategy.SEMANTIC:
             # Deferred to v1.6 — fall back to recent
             logger.warning("Semantic truncation not implemented (v1.6), falling back to recent")
@@ -208,7 +224,7 @@ class Truncator:
             return []
 
         # Score all messages
-        scored: list[tuple[int, StratifiedMessage]] = []
+        scored: list[tuple[int, int, StratifiedMessage]] = []
         for i, msg in enumerate(messages):
             score = self._score_message(msg)
             scored.append((score, i, msg))
@@ -288,3 +304,42 @@ class Truncator:
                 break  # Only count once
 
         return base_score + tool_bonus + keyword_bonus
+
+    def _truncate_with_litellm(
+        self,
+        messages: list[StratifiedMessage],
+        max_tokens: int,
+    ) -> list[StratifiedMessage]:
+        """Use LiteLLM's trim_messages for model-aware trimming.
+
+        Args:
+            messages: L2 session messages to trim.
+            max_tokens: Maximum token budget.
+
+        Returns:
+            Trimmed list of messages.
+        """
+        if not LITELLM_AVAILABLE:
+            logger.warning(
+                "LiteLLM not installed, falling back to recent truncation. "
+                "Install with: pip install litellm"
+            )
+            return self._truncate_recent(messages, max_tokens)
+
+        # Convert StratifiedMessage to dict format for LiteLLM
+        messages_dict = [msg.model_dump() for msg in messages]
+
+        # Trim using LiteLLM with 75% ratio (leaves 25% headroom)
+        try:
+            trimmed_dict = trim_messages(
+                messages=messages_dict,
+                model=self._model_name,
+                max_tokens=max_tokens,
+                trim_ratio=0.75,
+            )
+
+            # Convert back to StratifiedMessage
+            return [StratifiedMessage.model_validate(m) for m in trimmed_dict]
+        except Exception as e:
+            logger.warning("LiteLLM trim_messages failed (%s), falling back to recent", e)
+            return self._truncate_recent(messages, max_tokens)

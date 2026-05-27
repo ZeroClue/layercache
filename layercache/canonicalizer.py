@@ -18,6 +18,7 @@ import re
 from typing import Any
 
 from .models import LayerType, StratifiedPrompt
+from .serializers.tool_serializer import ToolSerializer
 
 
 class Canonicalizer:
@@ -97,31 +98,27 @@ class Canonicalizer:
     def _canonicalize_tools(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Canonicalize tool definitions for deterministic output.
 
+        Uses ToolSerializer for deterministic serialization:
         - Sort tools alphabetically by function.name
+        - Sort all dict keys recursively
+        - Normalize float representations
         - Minify all JSON strings within function parameters
         - Normalize whitespace in descriptions
+
+        Args:
+            tools: List of tool definitions.
+
+        Returns:
+            Canonicalized list of tools.
         """
         if not tools:
             return tools
 
-        canonical_tools = []
-        for tool in tools:
-            tool = dict(tool)  # shallow copy
-            if "function" in tool:
-                func = dict(tool["function"])
-                # Normalize function description
-                if "description" in func and isinstance(func["description"], str):
-                    func["description"] = self._canonicalize_string(func["description"])
-                # Minify JSON schema in parameters
-                if "parameters" in func and isinstance(func["parameters"], dict):
-                    func["parameters"] = self._minify_json(func["parameters"])
-                tool["function"] = func
-            canonical_tools.append(tool)
+        # Use ToolSerializer for deterministic serialization
+        serialized = ToolSerializer.serialize_tools_deterministic(tools)
 
-        # Sort alphabetically by function.name
-        canonical_tools.sort(key=lambda t: t.get("function", {}).get("name", ""))
-
-        return canonical_tools
+        # Parse back to dict for downstream use
+        return json.loads(serialized)
 
     @staticmethod
     def _minify_json(obj: Any) -> Any:

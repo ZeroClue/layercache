@@ -7,6 +7,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from .serializers.tool_serializer import ToolSerializer
+
 
 class LayerType(StrEnum):
     """Prompt layer types in the Layered Prompt Architecture.
@@ -115,11 +117,18 @@ class StratifiedPrompt(BaseModel):
         """Get all messages in a specific layer."""
         return self.layers.get(layer, [])
 
-    def prefix_hash(self) -> str:
+    def prefix_hash(self, tools: list[dict] | None = None) -> str:
         """Generate a SHA-256 hash of the stable prefix (L0 + L1 + L2).
 
         Used as the exact-match key for the semantic cache.
         If session_id is set, it's included in the hash for session isolation.
+        If tools are provided, their deterministic hash is included for tool-aware caching.
+
+        Args:
+            tools: Optional list of tool definitions. If provided, included in hash.
+
+        Returns:
+            SHA-256 hash of the stable prefix including tools if provided.
         """
         import hashlib
         import json
@@ -140,8 +149,30 @@ class StratifiedPrompt(BaseModel):
                 )
                 prefix_content.append(f"{msg.role}:{content_str}")
 
+        # Include tool_hash if tools are provided
+        if tools:
+            tool_hash = ToolSerializer.compute_tool_hash(tools)
+            prefix_content.append(f"_tools:{tool_hash}")
+
         combined = "|".join(prefix_content)
         return hashlib.sha256(combined.encode()).hexdigest()
+
+    def stable_prefix_tokens(self) -> int:
+        """Count tokens in the stable prefix (L0 + L1 + L2).
+
+        Used to validate cache eligibility (Anthropic requires ≥1,024 tokens).
+        """
+        from .truncation import TokenCounter
+
+        counter = TokenCounter()
+        stable_layers = [LayerType.SYSTEM, LayerType.CONTEXT, LayerType.SESSION]
+        total = 0
+
+        for lt in stable_layers:
+            for msg in self.layers[lt]:
+                total += counter.count_messages([msg])
+
+        return total
 
     def get_user_query(self) -> str:
         """Extract the user's query from L4."""
@@ -185,8 +216,14 @@ class LayerCacheRequest(BaseModel):
     lc_enhancements: list[str] = Field(default_factory=list, max_length=32)
     lc_cache_ttl: int = 300
     lc_layer_hints: dict[int, str] | None = Field(default=None, max_length=512)
-    lc_skip_semantic_cache: bool = False
-    lc_bypass_cache: bool = False
+    lc_skip_semantic_cache: bool = Field(
+        default=False,
+        description="Skip semantic cache lookup but still store result (cache warming)",
+    )
+    lc_bypass_cache: bool = Field(
+        default=False,
+        description="Skip semantic cache lookup AND don't store result (full bypass)",
+    )
     lc_session_id: str | None = Field(
         default=None,
         max_length=128,

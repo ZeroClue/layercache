@@ -24,36 +24,44 @@ class TestWhitespaceNormalization:
 
     def test_strip_leading_trailing_whitespace(self, canonicalizer: Canonicalizer) -> None:
         """Content should have leading/trailing whitespace stripped."""
-        prompt = _make_prompt([
-            (LayerType.SYSTEM, "system", "  Hello world  "),
-        ])
+        prompt = _make_prompt(
+            [
+                (LayerType.SYSTEM, "system", "  Hello world  "),
+            ]
+        )
         prompt, _ = canonicalizer.canonicalize(prompt)
 
         assert prompt.layers[LayerType.SYSTEM][0].content == "Hello world"
 
     def test_collapse_triple_newlines(self, canonicalizer: Canonicalizer) -> None:
         """Three or more consecutive newlines should be collapsed to two."""
-        prompt = _make_prompt([
-            (LayerType.SYSTEM, "system", "Line 1\n\n\n\nLine 2"),
-        ])
+        prompt = _make_prompt(
+            [
+                (LayerType.SYSTEM, "system", "Line 1\n\n\n\nLine 2"),
+            ]
+        )
         prompt, _ = canonicalizer.canonicalize(prompt)
 
         assert prompt.layers[LayerType.SYSTEM][0].content == "Line 1\n\nLine 2"
 
     def test_collapse_multiple_spaces(self, canonicalizer: Canonicalizer) -> None:
         """Multiple consecutive spaces should be collapsed to one."""
-        prompt = _make_prompt([
-            (LayerType.SYSTEM, "system", "Hello   world   test"),
-        ])
+        prompt = _make_prompt(
+            [
+                (LayerType.SYSTEM, "system", "Hello   world   test"),
+            ]
+        )
         prompt, _ = canonicalizer.canonicalize(prompt)
 
         assert prompt.layers[LayerType.SYSTEM][0].content == "Hello world test"
 
     def test_strip_trailing_whitespace_per_line(self, canonicalizer: Canonicalizer) -> None:
         """Trailing whitespace should be removed from each line."""
-        prompt = _make_prompt([
-            (LayerType.SYSTEM, "system", "Line 1   \nLine 2  "),
-        ])
+        prompt = _make_prompt(
+            [
+                (LayerType.SYSTEM, "system", "Line 1   \nLine 2  "),
+            ]
+        )
         prompt, _ = canonicalizer.canonicalize(prompt)
 
         content = prompt.layers[LayerType.SYSTEM][0].content
@@ -106,14 +114,18 @@ class TestDeterminism:
 
     def test_same_input_same_output(self, canonicalizer: Canonicalizer) -> None:
         """Same prompt should always produce identical canonical output."""
-        prompt1 = _make_prompt([
-            (LayerType.SYSTEM, "system", "  Hello   world  "),
-            (LayerType.USER, "user", "  Question?  "),
-        ])
-        prompt2 = _make_prompt([
-            (LayerType.SYSTEM, "system", "  Hello   world  "),
-            (LayerType.USER, "user", "  Question?  "),
-        ])
+        prompt1 = _make_prompt(
+            [
+                (LayerType.SYSTEM, "system", "  Hello   world  "),
+                (LayerType.USER, "user", "  Question?  "),
+            ]
+        )
+        prompt2 = _make_prompt(
+            [
+                (LayerType.SYSTEM, "system", "  Hello   world  "),
+                (LayerType.USER, "user", "  Question?  "),
+            ]
+        )
 
         p1, _ = canonicalizer.canonicalize(prompt1)
         p2, _ = canonicalizer.canonicalize(prompt2)
@@ -122,13 +134,15 @@ class TestDeterminism:
 
     def test_reassemble_is_deterministic(self, canonicalizer: Canonicalizer) -> None:
         """Reassembling the same prompt multiple times should produce identical output."""
-        prompt = _make_prompt([
-            (LayerType.SYSTEM, "system", "System message"),
-            (LayerType.CONTEXT, "system", "Context information"),
-            (LayerType.SESSION, "user", "Previous question"),
-            (LayerType.SESSION, "assistant", "Previous answer"),
-            (LayerType.USER, "user", "Current question"),
-        ])
+        prompt = _make_prompt(
+            [
+                (LayerType.SYSTEM, "system", "System message"),
+                (LayerType.CONTEXT, "system", "Context information"),
+                (LayerType.SESSION, "user", "Previous question"),
+                (LayerType.SESSION, "assistant", "Previous answer"),
+                (LayerType.USER, "user", "Current question"),
+            ]
+        )
 
         prompt, _ = canonicalizer.canonicalize(prompt)
         result1 = prompt.reassemble()
@@ -142,12 +156,21 @@ class TestMultimodalContent:
 
     def test_text_blocks_canonicalized(self, canonicalizer: Canonicalizer) -> None:
         """Text blocks in multimodal content should be canonicalized."""
-        prompt = _make_prompt([
-            (LayerType.USER, "user", [
-                {"type": "text", "text": "  Hello   world  "},
-                {"type": "image_url", "image_url": {"url": "https://example.com/image.png"}},
-            ]),
-        ])
+        prompt = _make_prompt(
+            [
+                (
+                    LayerType.USER,
+                    "user",
+                    [
+                        {"type": "text", "text": "  Hello   world  "},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "https://example.com/image.png"},
+                        },
+                    ],
+                ),
+            ]
+        )
         prompt, _ = canonicalizer.canonicalize(prompt)
 
         content = prompt.layers[LayerType.USER][0].content

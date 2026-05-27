@@ -47,3 +47,7 @@ data/cache/
 *.bin
 *.safetensors
 .cache/
+
+# mcp cache proxy
+./.mcp-cache-proxy/
+.mcp-cache-proxy.json

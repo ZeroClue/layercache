@@ -27,6 +27,7 @@ class OpenAIAdapter(BaseAdapter):
         self,
         prompt: StratifiedPrompt,
         payload: dict[str, Any],
+        config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Prepare the payload for OpenAI's automatic prefix caching.
 
@@ -48,10 +49,23 @@ class OpenAIAdapter(BaseAdapter):
 
         OpenAI returns cache metrics in the `usage` field:
         - cached_tokens: tokens served from cache (if available)
+
+        As of 2025, OpenAI returns cached_tokens nested in prompt_tokens_details:
+        - usage.prompt_tokens_details.cached_tokens
+
+        Falls back to usage.cached_tokens for backward compatibility.
         """
         usage = response.get("usage", {})
+
+        cached_tokens = 0
+        prompt_tokens_details = usage.get("prompt_tokens_details", {})
+        if prompt_tokens_details:
+            cached_tokens = prompt_tokens_details.get("cached_tokens", 0)
+        else:
+            cached_tokens = usage.get("cached_tokens", 0)
+
         return {
-            "cache_read_input_tokens": usage.get("cached_tokens", 0),
+            "cache_read_input_tokens": cached_tokens,
             "cache_creation_input_tokens": 0,
             "input_tokens": usage.get("prompt_tokens", 0),
             "output_tokens": usage.get("completion_tokens", 0),

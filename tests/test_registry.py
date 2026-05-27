@@ -105,13 +105,17 @@ L1:
         templates_dir.mkdir()
 
         json_file = templates_dir / "json_template.json"
-        json_file.write_text(json.dumps({
-            "name": "json-assistant",
-            "version": "1.0",
-            "description": "JSON template",
-            "L0": [{"role": "system", "content": "JSON system prompt"}],
-            "L1": [],
-        }))
+        json_file.write_text(
+            json.dumps(
+                {
+                    "name": "json-assistant",
+                    "version": "1.0",
+                    "description": "JSON template",
+                    "L0": [{"role": "system", "content": "JSON system prompt"}],
+                    "L1": [],
+                }
+            )
+        )
 
         registry = PromptRegistry(templates_dir=templates_dir)
         template = registry.get_template("json-assistant")

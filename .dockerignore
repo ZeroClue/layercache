@@ -8,7 +8,6 @@ dist/
 build/
 .eggs/
 .env
-.git/
 .github/
 .mypy_cache/
 .pytest_cache/
@@ -28,3 +27,6 @@ venv/
 docs/
 *.md
 !README.md
+!docs/releases/
+.mcp-cache-proxy/
+.mcp-cache-proxy.json

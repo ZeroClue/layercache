@@ -52,6 +52,7 @@ class MetricsDB:
                     session_id TEXT,
                     model TEXT NOT NULL,
                     semantic_cache_hit INTEGER DEFAULT 0,
+                    cache_tier TEXT,
                     duration_ms REAL,
                     input_tokens INTEGER,
                     output_tokens INTEGER,
@@ -241,6 +242,7 @@ class MetricsDB:
         model: str,
         session_id: str | None = None,
         semantic_cache_hit: bool = False,
+        cache_tier: str | None = None,
         duration_ms: float | None = None,
         input_tokens: int = 0,
         output_tokens: int = 0,
@@ -256,6 +258,7 @@ class MetricsDB:
             model: Model name used for the request.
             session_id: Optional session identifier.
             semantic_cache_hit: Whether semantic cache was hit.
+            cache_tier: Which cache tier was hit (semantic, prefix, inference).
             duration_ms: Request duration in milliseconds.
             input_tokens: Input token count.
             output_tokens: Output token count.
@@ -276,16 +279,17 @@ class MetricsDB:
         await self._db.execute(
             """
             INSERT INTO metrics_requests
-            (created_at, session_id, model, semantic_cache_hit, duration_ms,
+            (created_at, session_id, model, semantic_cache_hit, cache_tier, duration_ms,
              input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
              template_name, enhancements)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 created_at_sql,
                 session_id,
                 model,
                 1 if semantic_cache_hit else 0,
+                cache_tier,
                 duration_ms,
                 input_tokens,
                 output_tokens,

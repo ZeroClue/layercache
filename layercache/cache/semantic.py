@@ -293,6 +293,20 @@ class SemanticCache:
             logger.debug("Cleaned up %d expired cache entries", removed)
         return removed
 
+    async def is_in_probation(self, entry_id: str) -> bool:
+        """Check if a cache entry is in probation.
+
+        Args:
+            entry_id: The cache entry ID to check.
+
+        Returns:
+            True if the entry is in probation, False otherwise.
+        """
+        # This method is a placeholder - actual probation tracking
+        # is handled by ProbationTracker which has direct DB access
+        # This is here for API completeness
+        return False
+
     async def stats(self) -> dict[str, Any]:
         """Get cache statistics."""
         if self._db is None:

@@ -20,22 +20,53 @@ def _make_prompt() -> StratifiedPrompt:
 
 class TestAnthropicAdapter:
     def test_injects_cache_control_markers(self) -> None:
-        """Anthropic adapter should inject cache_control at layer boundaries."""
+        """Anthropic adapter should inject cache_control at L2/L3 boundary when >= 1024 tokens."""
+        adapter = AnthropicAdapter()
+        prompt = StratifiedPrompt()
+
+        # Create a prompt with enough tokens to exceed 1,024 threshold
+        system_content = "You are a helpful assistant with extensive knowledge. " * 50
+        prompt.add_message(LayerType.SYSTEM, "system", system_content)
+
+        context_content = "You have access to a comprehensive knowledge base. " * 40
+        prompt.add_message(LayerType.CONTEXT, "system", context_content)
+
+        session_content = "User: Question. Assistant: Answer. " * 30
+        prompt.add_message(LayerType.SESSION, "user", session_content)
+        prompt.add_message(LayerType.USER, "user", "What is Python?")
+
+        payload = {"model": "claude-3-5-sonnet-20241022"}
+        result = adapter.inject_markers(prompt, payload)
+
+        messages = result["messages"]
+        cache_controlled = [
+            m
+            for m in messages
+            if isinstance(m.get("content"), list)
+            and any(block.get("cache_control") for block in m["content"])
+        ]
+
+        # Should have cache_control ONLY at L2 boundary (last stable layer)
+        assert len(cache_controlled) == 1
+        assert cache_controlled[0]["_layer"] == LayerType.SESSION
+
+    def test_no_markers_when_below_threshold(self) -> None:
+        """Anthropic adapter should NOT inject markers when prefix < 1024 tokens."""
         prompt = _make_prompt()
         adapter = AnthropicAdapter()
         payload = {"model": "claude-3-5-sonnet-20241022"}
         result = adapter.inject_markers(prompt, payload)
 
         messages = result["messages"]
-        # Check that cache_control is injected on messages at layer boundaries
         cache_controlled = [
-            m for m in messages
+            m
+            for m in messages
             if isinstance(m.get("content"), list)
             and any(block.get("cache_control") for block in m["content"])
         ]
 
-        # Should have cache_control markers for L0, L1, L2 boundaries
-        assert len(cache_controlled) >= 2
+        # Should have NO cache_control markers (below 1024 tokens)
+        assert len(cache_controlled) == 0
 
     def test_extracts_cache_metrics(self) -> None:
         """Should correctly extract Anthropic cache metrics."""

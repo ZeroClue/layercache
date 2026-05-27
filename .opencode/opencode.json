@@ -1,0 +1,11 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "mcp-cache-proxy": {
+      "type": "local",
+      "command": ["npx", "-y", "mcp-cache-proxy"],
+      "enabled": true,
+      "env": {}
+    }
+  }
+}

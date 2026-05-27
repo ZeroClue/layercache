@@ -266,7 +266,98 @@ else:
 
 ---
 
-## Integration
+---
+
+## Handoff Protocol
+
+### To Orchestrator (Required After Every Review)
+
+After completing a review, provide:
+
+```markdown
+## Review Summary (For Orchestrator)
+
+**Verdict:** [APPROVE | APPROVE WITH MINOR FIXES | REQUEST CHANGES]
+
+**Blocking Issues:** [N issues that must be fixed before merge]
+1. [Issue 1 — file:line]
+2. [Issue 2 — file:line]
+
+**Non-Blocking Issues:** [N issues that can be fixed later]
+1. [Issue 1]
+2. [Issue 2]
+
+**Recommended Next Step:**
+- [ ] Send to Fixer Agent (if blocking issues exist)
+- [ ] Approve for merge (if no blocking issues)
+- [ ] Escalate to human (if architectural concerns)
+
+**Estimated Fix Effort:** [Low/Medium/High] — [Why]
+```
+
+### On Completion
+
+After completing your review:
+
+1. Call `on_agent_complete()` with your verdict
+2. This will auto-save workflow state
+3. Next agent will be auto-spawned based on your verdict
+
+```python
+from layercache.workflow import on_agent_complete
+
+on_agent_complete(
+    workflow_id="v1.6-prompt-context-engineering",
+    agent_name="Review Agent",
+    phase_name="Phase 1.3: Tool Schema Serialization",
+    tests_passing=198,
+    notes="APPROVE - Review approved, minor issues fixed"
+)
+```
+
+### To Fixer Agent (When Issues Found)
+
+When sending to Fixer Agent, include:
+1. Link to review document (`docs/reviews/...`)
+2. List of blocking issues with file:line references
+3. Test requirements (what new tests are needed)
+4. Verification commands to run after fix
+
+### Escalation Triggers
+
+Escalate to orchestrator (not Fixer Agent) when:
+- Review finds architectural flaws (requires plan revision)
+- Review finds security vulnerabilities (requires security audit)
+- Review finds >5 blocking issues (requires prioritization)
+- Review conflicts with DAA-approved spec (requires spec update)
+
+---
+
+## Related Agents
+
+- **Devil's Advocate Agent (DAA)**: Pre-implementation plan review. Invoke before implementation begins.
+- **Fixer Agent**: Implements review findings. Invoke after review to fix identified issues.
+- **Verification Skills**: `verification-before-completion`, `test-driven-development` — use for final verification.
+
+**Complete Workflow:**
+```
+Plan → DAA Review → Implementation → Code Review → Fixer Agent → Verification → Merge
+```
+
+## Integration with Skills
+
+This agent complements the following opencode skills:
+
+- **`requesting-code-review`**: Use when you want a second opinion before merging. This agent provides the detailed review; the skill handles the workflow.
+- **`verification-before-completion`**: After review approval, run verification commands (tests, lint, typecheck) before claiming work complete.
+- **`receiving-code-review`**: When implementing review feedback, use this skill to avoid performative agreement — focus on technical rigor.
+
+**Workflow:**
+```
+Review Agent finds issues → Fixer Agent implements → Verification (skill) → Merge
+```
+
+---
 
 ### Saving Reviews
 

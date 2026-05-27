@@ -42,6 +42,7 @@ class TestSemanticCache:
     async def cache(self) -> SemanticCache:
         """Create an in-memory semantic cache for testing."""
         import tempfile
+
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
             db_path = f.name
 

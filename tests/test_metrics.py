@@ -94,6 +94,7 @@ class TestRequestTimer:
     def test_timer_measures_duration(self) -> None:
         """Timer should measure elapsed time."""
         import time
+
         timer = RequestTimer()
         with timer:
             time.sleep(0.05)
