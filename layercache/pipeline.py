@@ -41,6 +41,17 @@ logger = logging.getLogger(__name__)
 # Model names must match known provider prefixes to block SSRF via LiteLLM
 _ALLOWED_MODEL_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_.:-]*(/[a-zA-Z][a-zA-Z0-9_.:-]+)?$")
 
+_ANTHROPIC_STOP_REASON_MAP: dict[str, str] = {
+    "end_turn": "stop",
+    "tool_use": "tool_calls",
+    "max_tokens": "length",
+}
+
+
+def _anthropic_stop_reason(reason: str) -> str:
+    """Map Anthropic stop_reason to OpenAI finish_reason."""
+    return _ANTHROPIC_STOP_REASON_MAP.get(reason, reason)
+
 
 def validate_model_name(model: str) -> None:
     """Reject model names that look like URLs, IPs, or paths (SSRF guard).
@@ -781,6 +792,11 @@ class RequestPipeline:
         try:
             import litellm
 
+            # For Anthropic providers, call the API directly to avoid LiteLLM's
+            # OpenAI->Anthropic message translation which corrupts tool sequences.
+            if provider == "anthropic":
+                return await self._call_anthropic_direct(payload, api_key, model)
+
             # Look up base_url and adapter from provider config
             kwargs: dict[str, Any] = {
                 "api_key": api_key,
@@ -812,45 +828,244 @@ class RequestPipeline:
             logger.error("LiteLLM call failed: %s", e)
             raise
 
-    def _resolve_model(self, model: str, provider: str) -> str:
-        """Resolve model name through provider aliases or upstream model list."""
-        if not self._providers_config:
-            return model
-        cfg = self._providers_config.root.get(provider)
-        if not cfg:
-            return model
-        # First check explicit aliases
-        if cfg.model_aliases:
-            resolved = cfg.model_aliases.get(model)
-            if resolved:
-                logger.debug("Model alias: %s -> %s (provider=%s)", model, resolved, provider)
-                return resolved
-        # Strip provider-specific suffixes (e.g. :cloud for Ollama Cloud)
-        resolved = model
-        if model.endswith(":cloud") and provider == "ollama-cloud":
-            resolved = model[: -len(":cloud")]
-            logger.debug(
-                "Stripped :cloud suffix: %s -> %s (provider=%s)",
-                model,
-                resolved,
-                provider,
-            )
-        # Auto-resolve: if upstream has a model whose name starts with <model>-,
-        # use that (catches deepseek-v4-flash -> deepseek-v4-flash-free etc.)
-        if cfg.base_url and self._upstream_models.get(provider):
-            upstream_ids = self._upstream_models[provider]
-            if resolved not in upstream_ids:
-                prefix = f"{resolved}-"
-                matches = [m for m in upstream_ids if m.startswith(prefix)]
-                if len(matches) == 1:
-                    logger.info(
-                        "Auto-resolved model %s -> %s (provider=%s)",
-                        resolved,
-                        matches[0],
-                        provider,
+    async def _call_anthropic_direct(
+        self,
+        payload: dict[str, Any],
+        api_key: str,
+        model: str,
+    ) -> dict[str, Any]:
+        """Call the Anthropic Messages API directly, bypassing LiteLLM.
+
+        Converts the pipeline's OpenAI-format payload to Anthropic format,
+        sends it via HTTP, and converts the response back to OpenAI format
+        for cache storage.
+        """
+        import json
+
+        import httpx
+
+        # --- Convert OpenAI messages to Anthropic format ---
+        anthropic_messages: list[dict[str, Any]] = []
+        system_content: str | None = None
+
+        for msg in payload.get("messages", []):
+            role = msg["role"]
+            content = msg.get("content", "")
+            tool_calls = msg.get("tool_calls")
+            tool_call_id = msg.get("tool_call_id")
+
+            if role == "system":
+                system_content = (
+                    (system_content or "") + ("\n" if system_content else "") + str(content)
+                )
+                continue
+
+            if role == "assistant" and tool_calls:
+                blocks: list[dict[str, Any]] = []
+                if content:
+                    blocks.append({"type": "text", "text": str(content)})
+                for tc in tool_calls:
+                    func = tc.get("function", {})
+                    blocks.append(
+                        {
+                            "type": "tool_use",
+                            "id": tc.get("id", ""),
+                            "name": func.get("name", ""),
+                            "input": json.loads(func.get("arguments", "{}"))
+                            if isinstance(func.get("arguments"), str)
+                            else func.get("arguments", {}),
+                        }
                     )
-                    return matches[0]
-        return resolved
+                anthropic_messages.append({"role": "assistant", "content": blocks})
+                continue
+
+            if role == "tool":
+                anthropic_messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tool_call_id or "",
+                                "content": str(content) if content else "",
+                            }
+                        ],
+                    }
+                )
+                continue
+
+            # Regular user message
+            if role == "user":
+                if isinstance(content, str):
+                    anthropic_messages.append(
+                        {"role": "user", "content": [{"type": "text", "text": content}]}
+                    )
+                elif isinstance(content, list):
+                    anthropic_messages.append({"role": "user", "content": content})
+                continue
+
+            # Fallback: pass through
+            anthropic_messages.append({"role": role, "content": content or ""})
+
+        # --- Build Anthropic request body ---
+        anthropic_body: dict[str, Any] = {
+            "model": model,
+            "messages": anthropic_messages,
+            "max_tokens": payload.get("max_tokens", 4096),
+        }
+        if system_content:
+            anthropic_body["system"] = system_content
+        if payload.get("temperature") is not None:
+            anthropic_body["temperature"] = payload["temperature"]
+        if payload.get("top_p") is not None:
+            anthropic_body["top_p"] = payload["top_p"]
+        if payload.get("stop"):
+            anthropic_body["stop_sequences"] = payload["stop"]
+
+        # Convert tools from OpenAI to Anthropic format
+        tools = payload.get("tools")
+        if tools:
+            anthropic_tools = []
+            for t in tools:
+                func = t.get("function", {})
+                anthropic_tools.append(
+                    {
+                        "name": func.get("name", ""),
+                        "description": func.get("description", ""),
+                        "input_schema": func.get("parameters", {}),
+                    }
+                )
+            anthropic_body["tools"] = anthropic_tools
+
+        tool_choice = payload.get("tool_choice")
+        if tool_choice:
+            if isinstance(tool_choice, str):
+                reverse_map = {"auto": "auto", "required": "any", "none": "none"}
+                anthropic_body["tool_choice"] = {"type": reverse_map.get(tool_choice, tool_choice)}
+            elif isinstance(tool_choice, dict):
+                tc_type = tool_choice.get("type")
+                if tc_type == "function":
+                    anthropic_body["tool_choice"] = {
+                        "type": "tool",
+                        "name": tool_choice.get("function", {}).get("name", ""),
+                    }
+                else:
+                    anthropic_body["tool_choice"] = tool_choice
+
+        # --- Call Anthropic API ---
+        provider_cfg = (
+            self._providers_config.root.get("anthropic") if self._providers_config else None
+        )
+        base_url = (
+            provider_cfg.base_url
+            if provider_cfg and provider_cfg.base_url
+            else "https://api.anthropic.com/v1"
+        )
+        api_url = f"{base_url.rstrip('/')}/messages"
+
+        headers = {
+            "Content-Type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        }
+
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            response = await client.post(api_url, json=anthropic_body, headers=headers)
+            if response.status_code != 200:
+                logger.error(
+                    "Anthropic API error (HTTP %d): %s",
+                    response.status_code,
+                    response.text[:500],
+                )
+                response.raise_for_status()
+
+            anthropic_resp = response.json()
+
+        # --- Convert Anthropic response to OpenAI format ---
+        openai_choices: list[dict[str, Any]] = []
+        content_blocks = anthropic_resp.get("content", [])
+        text_parts: list[str] = []
+        openai_tool_calls: list[dict[str, Any]] = []
+
+        for block in content_blocks:
+            if block.get("type") == "text":
+                text_parts.append(block.get("text", ""))
+            elif block.get("type") == "tool_use":
+                openai_tool_calls.append(
+                    {
+                        "id": block.get("id", ""),
+                        "type": "function",
+                        "function": {
+                            "name": block.get("name", ""),
+                            "arguments": json.dumps(block.get("input", {})),
+                        },
+                    }
+                )
+
+        message: dict[str, Any] = {"role": "assistant", "content": "".join(text_parts)}
+        if openai_tool_calls:
+            message["tool_calls"] = openai_tool_calls
+
+        usage = anthropic_resp.get("usage", {})
+        openai_choices.append(
+            {
+                "index": 0,
+                "message": message,
+                "finish_reason": _anthropic_stop_reason(anthropic_resp.get("stop_reason", "")),
+            }
+        )
+
+        return {
+            "id": anthropic_resp.get("id", ""),
+            "object": "chat.completion",
+            "created": int(__import__("time").time()),
+            "model": anthropic_resp.get("model", model),
+            "choices": openai_choices,
+            "usage": {
+                "prompt_tokens": usage.get("input_tokens", 0),
+                "completion_tokens": usage.get("output_tokens", 0),
+            },
+        }
+
+        def _resolve_model(self, model: str, provider: str) -> str:
+            """Resolve model name through provider aliases or upstream model list."""
+            if not self._providers_config:
+                return model
+            cfg = self._providers_config.root.get(provider)
+            if not cfg:
+                return model
+            # First check explicit aliases
+            if cfg.model_aliases:
+                resolved = cfg.model_aliases.get(model)
+                if resolved:
+                    logger.debug("Model alias: %s -> %s (provider=%s)", model, resolved, provider)
+                    return resolved
+            # Strip provider-specific suffixes (e.g. :cloud for Ollama Cloud)
+            resolved = model
+            if model.endswith(":cloud") and provider == "ollama-cloud":
+                resolved = model[: -len(":cloud")]
+                logger.debug(
+                    "Stripped :cloud suffix: %s -> %s (provider=%s)",
+                    model,
+                    resolved,
+                    provider,
+                )
+            # Auto-resolve: if upstream has a model whose name starts with <model>-,
+            # use that (catches deepseek-v4-flash -> deepseek-v4-flash-free etc.)
+            if cfg.base_url and self._upstream_models.get(provider):
+                upstream_ids = self._upstream_models[provider]
+                if resolved not in upstream_ids:
+                    prefix = f"{resolved}-"
+                    matches = [m for m in upstream_ids if m.startswith(prefix)]
+                    if len(matches) == 1:
+                        logger.info(
+                            "Auto-resolved model %s -> %s (provider=%s)",
+                            resolved,
+                            matches[0],
+                            provider,
+                        )
+                        return matches[0]
+            return resolved
 
     async def _stream_llm(
         self,
@@ -859,11 +1074,17 @@ class RequestPipeline:
         model: str,
         provider: str = "",
     ) -> AsyncIterator[dict[str, Any] | str]:
-        """Stream responses from the LLM provider via LiteLLM."""
+        """Stream responses from the LLM provider."""
         try:
             import litellm
 
-            # Look up base_url and adapter from provider config
+            # For Anthropic providers, stream directly to avoid LiteLLM translation issues
+            if provider == "anthropic":
+                async for chunk in self._stream_anthropic_direct(payload, api_key, model):
+                    yield chunk
+                return
+
+            # LiteLLM path for non-Anthropic providers
             kwargs: dict[str, Any] = {
                 "api_key": api_key,
                 "timeout": self._timeout,
@@ -874,9 +1095,7 @@ class RequestPipeline:
                 provider_cfg = self._providers_config.root[provider]
                 if provider_cfg.base_url:
                     kwargs["api_base"] = provider_cfg.base_url
-                # Use adapter name as LiteLLM provider prefix
                 adapter = self._providers_config.adapter_for(provider)
-                # Build litellm model name: adapter/model_name
                 if "/" in model:
                     model_name = model.split("/", 1)[1]
                 else:
@@ -895,6 +1114,209 @@ class RequestPipeline:
             print(f"DEBUG LLM ERROR: {type(e).__name__}: {e}", flush=True)
             logger.error("LiteLLM streaming failed: %s", e)
             raise
+
+    async def _stream_anthropic_direct(
+        self,
+        payload: dict[str, Any],
+        api_key: str,
+        model: str,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Stream from the Anthropic Messages API directly, yielding OpenAI-format chunks."""
+        import json
+
+        import httpx
+
+        # Build Anthropic body (same as _call_anthropic_direct)
+        anthropic_messages: list[dict[str, Any]] = []
+        system_content: str | None = None
+
+        for msg in payload.get("messages", []):
+            role = msg["role"]
+            content = msg.get("content", "")
+            tool_calls = msg.get("tool_calls")
+            tool_call_id = msg.get("tool_call_id")
+
+            if role == "system":
+                system_content = (
+                    (system_content or "") + ("\n" if system_content else "") + str(content)
+                )
+                continue
+            if role == "assistant" and tool_calls:
+                blocks = []
+                if content:
+                    blocks.append({"type": "text", "text": str(content)})
+                for tc in tool_calls:
+                    func = tc.get("function", {})
+                    blocks.append(
+                        {
+                            "type": "tool_use",
+                            "id": tc.get("id", ""),
+                            "name": func.get("name", ""),
+                            "input": json.loads(func.get("arguments", "{}"))
+                            if isinstance(func.get("arguments"), str)
+                            else func.get("arguments", {}),
+                        }
+                    )
+                anthropic_messages.append({"role": "assistant", "content": blocks})
+                continue
+            if role == "tool":
+                anthropic_messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tool_call_id or "",
+                                "content": str(content) if content else "",
+                            }
+                        ],
+                    }
+                )
+                continue
+            if role == "user":
+                if isinstance(content, str):
+                    anthropic_messages.append(
+                        {"role": "user", "content": [{"type": "text", "text": content}]}
+                    )
+                elif isinstance(content, list):
+                    anthropic_messages.append({"role": "user", "content": content})
+                continue
+            anthropic_messages.append({"role": role, "content": content or ""})
+
+        anthropic_body: dict[str, Any] = {
+            "model": model,
+            "messages": anthropic_messages,
+            "max_tokens": payload.get("max_tokens", 4096),
+            "stream": True,
+        }
+        if system_content:
+            anthropic_body["system"] = system_content
+        if payload.get("temperature") is not None:
+            anthropic_body["temperature"] = payload["temperature"]
+        if payload.get("top_p") is not None:
+            anthropic_body["top_p"] = payload["top_p"]
+
+        tools = payload.get("tools")
+        if tools:
+            anthropic_tools = []
+            for t in tools:
+                func = t.get("function", {})
+                anthropic_tools.append(
+                    {
+                        "name": func.get("name", ""),
+                        "description": func.get("description", ""),
+                        "input_schema": func.get("parameters", {}),
+                    }
+                )
+            anthropic_body["tools"] = anthropic_tools
+
+        provider_cfg = (
+            self._providers_config.root.get("anthropic") if self._providers_config else None
+        )
+        base_url = (
+            provider_cfg.base_url
+            if provider_cfg and provider_cfg.base_url
+            else "https://api.anthropic.com/v1"
+        )
+        api_url = f"{base_url.rstrip('/')}/messages"
+
+        headers = {
+            "Content-Type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        }
+
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            async with client.stream("POST", api_url, json=anthropic_body, headers=headers) as resp:
+                if resp.status_code != 200:
+                    error_text = await resp.aread()
+                    logger.error(
+                        "Anthropic API error (HTTP %d): %s",
+                        resp.status_code,
+                        error_text[:500].decode(),
+                    )
+                    resp.raise_for_status()
+
+                message_id = ""
+                model_name = model
+                text_accumulator = ""
+                tool_calls_accumulator: list[dict] = []
+
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    data = json.loads(line[6:])
+                    event_type = data.get("type", "")
+
+                    if event_type == "message_start":
+                        msg_data = data.get("message", {})
+                        message_id = msg_data.get("id", "")
+                        model_name = msg_data.get("model", model)
+
+                    elif event_type == "content_block_start":
+                        block = data.get("content_block", {})
+                        if block.get("type") == "tool_use":
+                            tool_calls_accumulator.append(
+                                {
+                                    "id": block.get("id", ""),
+                                    "type": "function",
+                                    "function": {"name": block.get("name", ""), "arguments": ""},
+                                }
+                            )
+
+                    elif event_type == "content_block_delta":
+                        delta = data.get("delta", {})
+                        if delta.get("type") == "text_delta":
+                            text_accumulator += delta.get("text", "")
+                        elif delta.get("type") == "input_json_delta":
+                            if tool_calls_accumulator:
+                                tool_calls_accumulator[-1]["function"]["arguments"] += delta.get(
+                                    "partial_json", ""
+                                )
+
+                    elif event_type == "message_delta":
+                        delta = data.get("delta", {})
+                        usage = data.get("usage", {})
+                        stop_reason = _anthropic_stop_reason(delta.get("stop_reason", ""))
+
+                        # Yield final chunk with usage
+                        delta_content: dict[str, Any] = {"content": "", "role": "assistant"}
+                        if tool_calls_accumulator:
+                            delta_content["tool_calls"] = tool_calls_accumulator
+                        yield {
+                            "id": message_id or f"msg_{id(self)}",
+                            "object": "chat.completion.chunk",
+                            "created": int(__import__("time").time()),
+                            "model": model_name,
+                            "choices": [
+                                {"index": 0, "delta": delta_content, "finish_reason": stop_reason}
+                            ],
+                            "usage": {
+                                "prompt_tokens": usage.get("input_tokens", 0),
+                                "completion_tokens": usage.get("output_tokens", 0),
+                            },
+                        }
+
+                    # Yield streaming content chunks
+                    if text_accumulator and event_type == "content_block_delta":
+                        delta_type = data.get("delta", {}).get("type", "")
+                        if delta_type == "text_delta":
+                            yield {
+                                "id": message_id or f"msg_{id(self)}",
+                                "object": "chat.completion.chunk",
+                                "created": int(__import__("time").time()),
+                                "model": model_name,
+                                "choices": [
+                                    {
+                                        "index": 0,
+                                        "delta": {
+                                            "content": data["delta"]["text"],
+                                            "role": "assistant",
+                                        },
+                                        "finish_reason": None,
+                                    }
+                                ],
+                            }
 
     @staticmethod
     async def _stream_cached_response(response: dict[str, Any]) -> AsyncIterator[str]:

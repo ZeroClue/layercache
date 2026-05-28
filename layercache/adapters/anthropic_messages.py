@@ -135,7 +135,8 @@ def _translate_content_blocks(role: str, blocks: list[dict[str, Any]]) -> dict[s
             text_parts.append(b["text"])
 
     result: dict[str, Any] = {"role": role}
-    if len(text_parts) == 1 and not tool_uses:
+    # Flatten to string only if it's a single text block with no other content
+    if len(text_parts) == 1 and not tool_uses and len(non_tool_blocks) == 1:
         result["content"] = text_parts[0]
     elif text_parts or non_tool_blocks:
         # Build multimodal content from non-tool blocks
