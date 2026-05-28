@@ -59,7 +59,7 @@ In the background, LayerCache:
 | Long conversations grow an unbounded prefix, reducing cache effectiveness | Automatic L2 session truncation keeps only the last N tokens of conversation history |
 | Silent cache misses with no diagnostic | Runtime warning when L0+L1+L2 is below the provider caching threshold (~1024 tokens) |
 | Cross-conversation semantic cache hits near zero due to session history in the cache key | Prefix hash redesigned to L0+L1 only — L2 and session_id excluded from the cache key |
-| Model names differ between provider listing and upstream API | Configurable model aliases + automatic upstream model discovery |
+| Model names differ between client config and upstream API | Configurable model aliases + automatic upstream model discovery |
 
 ## Core Concept: The Layered Prompt Architecture
 
@@ -374,23 +374,23 @@ enhancements:
 
 ### Model Aliases
 
-When a proxy sits between the client and the upstream API, model names sent by the client may differ from the names the upstream accepts (e.g., the AI SDK strips provider prefixes like `opencode-go/`). LayerCache supports two resolution mechanisms:
+When a proxy sits between the client and the upstream API, model names sent by the client may differ from the names the upstream accepts. LayerCache supports two resolution mechanisms:
 
-1. **Explicit aliases** (`model_aliases` in `ProviderConfig`): Maps a client-side model name to an upstream name.
-2. **Auto-discovery**: On startup, LayerCache fetches `GET /v1/models` from each configured provider's `base_url` and builds a reverse index. If a requested model name isn't in the upstream list but matches a single ID by prefix (e.g., `deepseek-v4-flash` → `deepseek-v4-flash-free`), it resolves automatically.
+1. **Explicit aliases** (`model_aliases` in `ProviderConfig`): Maps a client-side model name to an upstream name. Use this when an upstream renames or versions a model (e.g., `qwen3.5-plus → qwen-3.5-plus-v2`).
+2. **Auto-discovery**: On startup, LayerCache fetches `GET /v1/models` from each configured provider's `base_url` and builds a reverse index. If a requested model name isn't in the upstream list but matches a single ID by prefix (e.g., `deepseek-v4-flash` matches `deepseek-v4-flash-free` on Zen), it resolves automatically.
+
+Auto-discovery only matches the **same model** — it does not redirect to a different product. `deepseek-v4-flash` (paid, Zero Retention on Go) and `deepseek-v4-flash-free` (free, data-collecting on Zen) are different models with different privacy guarantees; auto-discovery would not map between them for a subscription-based provider.
 
 ```yaml
 providers:
-  opencode-zen:
+  opencode:
     api_key_env: OPENCODE_ZEN_API_KEY
     base_url: https://opencode.ai/zen/v1
-    model_aliases:                   # Map client names to upstream names when they differ
-      deepseek-v4-flash: deepseek-v4-flash-free
+    model_aliases:
+      my-custom-model-name: qwen3.5-plus
 ```
 
 Auto-discovery requires `api_key_env` to be set so the model list endpoint can be authenticated. If both an explicit alias and an auto-discovered match exist, the explicit alias takes precedence.
-
-**Important**: The Go API endpoint (`https://opencode.ai/zen/go/v1`) serves models with their standard names (e.g., `deepseek-v4-flash`, `qwen3.5-plus`) — no aliases needed. Aliases are only required when the upstream adds suffixes (e.g., Zen's `-free` models) or renames models.
 
 ### Environment Variables
 

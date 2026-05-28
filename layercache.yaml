@@ -13,12 +13,13 @@ providers:
   opencode:
     api_key_env: OPENCODE_ZEN_API_KEY
     base_url: https://opencode.ai/zen/v1
+    # Full Zen API — paid (qwen3.5-plus, gpt-5.5, etc.) and free (-free suffix) models
   opencode-go:
     api_key_env: OPENCODE_ZEN_API_KEY
     base_url: https://opencode.ai/zen/go/v1
     default_model: opencode-go/qwen3.5-plus
-    # No model_aliases needed — Go models use the same name client sends
-    # (e.g. "deepseek-v4-flash" is the model ID on both client and upstream)
+    # Go model IDs match client names exactly — no aliases needed
+    # (deepseek-v4-flash on Go is the same name the client sends)
 caching:
   semantic:
     enabled: true
