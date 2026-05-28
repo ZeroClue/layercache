@@ -15,14 +15,10 @@ providers:
     base_url: https://opencode.ai/zen/v1
   opencode-go:
     api_key_env: OPENCODE_ZEN_API_KEY
-    base_url: https://opencode.ai/zen/v1
+    base_url: https://opencode.ai/zen/go/v1
     default_model: opencode-go/qwen3.5-plus
-    model_aliases:
-      deepseek-v4-flash: deepseek-v4-flash-free
-      mimo-v2.5: mimo-v2.5-free
-      qwen3.6-plus: qwen3.6-plus-free
-      minimax-m2.5: minimax-m2.5-free
-      nemotron-3-super: nemotron-3-super-free
+    # No model_aliases needed — Go models use the same name client sends
+    # (e.g. "deepseek-v4-flash" is the model ID on both client and upstream)
 caching:
   semantic:
     enabled: true

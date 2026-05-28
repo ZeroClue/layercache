@@ -339,9 +339,8 @@ providers:
     # adapter: openai                      # Override cache strategy (auto-detected if unset)
   opencode-go:
     api_key_env: OPENCODE_ZEN_API_KEY
-    base_url: https://opencode.ai/zen/v1
-    model_aliases:                         # Optional: map client model names to upstream names
-      deepseek-v4-flash: deepseek-v4-flash-free
+    base_url: https://opencode.ai/zen/go/v1
+    # No model_aliases needed — Go models use the same names client sends
 
 caching:
   semantic:
@@ -382,14 +381,16 @@ When a proxy sits between the client and the upstream API, model names sent by t
 
 ```yaml
 providers:
-  opencode-go:
+  opencode-zen:
     api_key_env: OPENCODE_ZEN_API_KEY
     base_url: https://opencode.ai/zen/v1
-    model_aliases:                   # Explicit overrides (optional)
+    model_aliases:                   # Map client names to upstream names when they differ
       deepseek-v4-flash: deepseek-v4-flash-free
 ```
 
 Auto-discovery requires `api_key_env` to be set so the model list endpoint can be authenticated. If both an explicit alias and an auto-discovered match exist, the explicit alias takes precedence.
+
+**Important**: The Go API endpoint (`https://opencode.ai/zen/go/v1`) serves models with their standard names (e.g., `deepseek-v4-flash`, `qwen3.5-plus`) — no aliases needed. Aliases are only required when the upstream adds suffixes (e.g., Zen's `-free` models) or renames models.
 
 ### Environment Variables
 
