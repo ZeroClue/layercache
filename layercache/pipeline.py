@@ -394,6 +394,7 @@ class RequestPipeline:
 
             # Stage 8: Extract metrics and store in semantic cache
             cache_metrics = adapter.extract_cache_metrics(response)
+            timer.duration = time.time() - timer.start_time
             self.metrics.record_request(
                 model=request.model,
                 input_tokens=cache_metrics.get("input_tokens") or 0,
@@ -649,6 +650,7 @@ class RequestPipeline:
                         input_tokens = output_tokens = 0
 
                 cache_metrics = adapter.extract_cache_metrics(final_chunk)
+                timer.duration = time.time() - timer.start_time
                 self.metrics.record_request(
                     model=request.model,
                     input_tokens=input_tokens or cache_metrics.get("input_tokens") or 0,

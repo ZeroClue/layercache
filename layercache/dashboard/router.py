@@ -109,25 +109,67 @@ async def overview(request: Request) -> HTMLResponse | RedirectResponse:
     if not _auth_check(request):
         return _redirect_login()
 
-    metrics = getattr(request.app.state, "metrics", None)
+    aggregator = getattr(request.app.state, "metrics_aggregator", None)
     metrics_db = getattr(request.app.state, "metrics_db", None)
 
-    stats: dict[str, Any] = {}
+    stats: dict[str, Any] = {
+        "llm_requests_total": 0,
+        "semantic_cache_hit_rate": 0.0,
+        "provider_token_cache_hit_rate": 0.0,
+        "estimated_tokens_saved": 0,
+        "estimated_cost_saved_usd": 0.0,
+        "avg_request_duration_seconds": 0.0,
+        "p95_request_duration_seconds": 0.0,
+    }
     data_age: int | None = None
-    if metrics:
-        raw = metrics.get_metrics()
-        stats = {
-            "llm_requests_total": raw.get("llm_requests_total", 0),
-            "semantic_cache_hit_rate": raw.get("semantic_cache_hit_rate", 0),
-            "provider_token_cache_hit_rate": raw.get("provider_token_cache_hit_rate", 0),
-            "estimated_tokens_saved": raw.get("estimated_tokens_saved", 0),
-            "estimated_cost_saved_usd": raw.get("estimated_cost_saved_usd", 0),
-            "avg_request_duration_seconds": raw.get("avg_request_duration_seconds", 0),
-            "p95_request_duration_seconds": raw.get("p95_request_duration_seconds", 0),
-        }
+
+    if aggregator:
+        try:
+            daily = await aggregator.get_recent_daily(limit=90)
+            total_requests = sum(d.total_requests for d in daily)
+            total_hits = sum(d.cache_hits for d in daily)
+            total_misses = sum(d.cache_misses for d in daily)
+            total_input = sum(d.total_input_tokens for d in daily)
+            total_output = sum(d.total_output_tokens for d in daily)
+            total_cache_read = sum(d.cache_read_tokens for d in daily)
+            latencies = [d.avg_latency_ms for d in daily if d.avg_latency_ms > 0]
+
+            stats["llm_requests_total"] = total_requests
+            semantic_total = total_hits + total_misses
+            stats["semantic_cache_hit_rate"] = (
+                total_hits / semantic_total if semantic_total > 0 else 0.0
+            )
+            stats["provider_token_cache_hit_rate"] = (
+                total_cache_read / total_input if total_input > 0 else 0.0
+            )
+            stats["estimated_tokens_saved"] = total_cache_read
+            # Rough cost estimate: $3/M input, $15/M output, $0.30/M cached read
+            pricing_input = 3.0
+            pricing_output = 15.0
+            pricing_cache_read = 0.30
+            cost_saved = (total_cache_read / 1_000_000) * (pricing_input - pricing_cache_read)
+            total_cost = (total_input / 1_000_000) * pricing_input + (
+                total_output / 1_000_000
+            ) * pricing_output
+            stats["estimated_cost_saved_usd"] = round(cost_saved, 4)
+            stats["estimated_total_cost_usd"] = round(total_cost, 4)
+
+            if latencies:
+                stats["avg_request_duration_seconds"] = round(
+                    sum(latencies) / len(latencies) / 1000, 4
+                )
+                sorted_lat = sorted(latencies)
+                p95_idx = min(int(len(sorted_lat) * 0.95), len(sorted_lat) - 1)
+                stats["p95_request_duration_seconds"] = round(sorted_lat[p95_idx] / 1000, 4)
+        except Exception:
+            logger.exception("Failed to load overview stats from aggregator")
+
     if metrics_db:
-        age = await metrics_db.snapshot_age()
-        data_age = age
+        try:
+            age = await metrics_db.snapshot_age()
+            data_age = age
+        except Exception:
+            pass
 
     return templates.TemplateResponse(
         request=request,
@@ -226,15 +268,33 @@ async def cache_page(request: Request) -> HTMLResponse | RedirectResponse:
         except Exception:
             logger.exception("Failed to read cache stats")
 
-    metrics = getattr(request.app.state, "metrics", None)
+    aggregator = getattr(request.app.state, "metrics_aggregator", None)
     bucket_count = 0
     avg_turns = 0.0
     cache_lookups = 0
-    if metrics:
-        raw = metrics.get_metrics()
-        bucket_count = raw.get("prefix_hash_bucket_count", 0)
-        avg_turns = raw.get("avg_turns_per_bucket", 0.0)
-        cache_lookups = raw.get("cache_lookups_total", 0)
+    if aggregator:
+        try:
+            daily = await aggregator.get_recent_daily(limit=90)
+            cache_lookups = sum(d.total_requests for d in daily)
+            # Prefix hash bucket metrics from the most recent snapshot
+            metrics_db = getattr(request.app.state, "metrics_db", None)
+            if metrics_db:
+                now_ts = int(time())
+                snapshots = await metrics_db.query_history(
+                    "prefix_hash_bucket_count", now_ts - 86400, now_ts, bucket_seconds=86400
+                )
+                latest_bucket = snapshots[-1] if snapshots else None
+                if latest_bucket and latest_bucket["avg"] is not None:
+                    bucket_count = int(latest_bucket["avg"])
+
+                turns_snapshots = await metrics_db.query_history(
+                    "avg_turns_per_bucket", now_ts - 86400, now_ts, bucket_seconds=86400
+                )
+                latest_turns = turns_snapshots[-1] if turns_snapshots else None
+                if latest_turns and latest_turns["avg"] is not None:
+                    avg_turns = latest_turns["avg"]
+        except Exception:
+            logger.exception("Failed to load cache page stats from aggregator")
 
     return templates.TemplateResponse(
         request=request,
