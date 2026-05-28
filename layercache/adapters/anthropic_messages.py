@@ -124,28 +124,53 @@ def _translate_content_blocks(role: str, blocks: list[dict[str, Any]]) -> dict[s
             "content": _tool_result_content(tool_result),
         }
 
-    # Single text block -> flatten to string
-    if len(blocks) == 1 and blocks[0].get("type") == "text":
-        return {"role": role, "content": blocks[0]["text"]}
+    # Extract tool_use blocks from assistant messages -> OpenAI tool_calls
+    tool_uses = [b for b in blocks if b.get("type") == "tool_use"]
+    non_tool_blocks = [b for b in blocks if b.get("type") != "tool_use"]
 
-    # Multimodal (text + image) -> array content
-    openai_content: list[dict[str, Any]] = []
-    for b in blocks:
+    # Build text content from non-tool blocks
+    text_parts: list[str] = []
+    for b in non_tool_blocks:
         if b["type"] == "text":
-            openai_content.append({"type": "text", "text": b["text"]})
-        elif b["type"] == "image":
-            src = b["source"]
-            openai_content.append(
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{src['media_type']};base64,{src['data']}",
-                    },
-                }
-            )
-    if not openai_content:
-        return {"role": role, "content": ""}
-    return {"role": role, "content": openai_content}
+            text_parts.append(b["text"])
+
+    result: dict[str, Any] = {"role": role}
+    if len(text_parts) == 1 and not tool_uses:
+        result["content"] = text_parts[0]
+    elif text_parts or non_tool_blocks:
+        # Build multimodal content from non-tool blocks
+        openai_content: list[dict[str, Any]] = []
+        for b in non_tool_blocks:
+            if b["type"] == "text":
+                openai_content.append({"type": "text", "text": b["text"]})
+            elif b["type"] == "image":
+                src = b["source"]
+                openai_content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{src['media_type']};base64,{src['data']}",
+                        },
+                    }
+                )
+        result["content"] = openai_content if openai_content else ""
+    else:
+        result["content"] = ""
+
+    if tool_uses:
+        result["tool_calls"] = [
+            {
+                "id": tu["id"],
+                "type": "function",
+                "function": {
+                    "name": tu.get("name", ""),
+                    "arguments": json.dumps(tu.get("input", {})),
+                },
+            }
+            for tu in tool_uses
+        ]
+
+    return result
 
 
 def _tool_result_content(block: dict[str, Any]) -> str | list[dict[str, Any]]:
