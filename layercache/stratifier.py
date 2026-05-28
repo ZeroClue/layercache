@@ -54,6 +54,12 @@ class Stratifier:
         """Set the prompt registry for template-based stratification."""
         self._registry = registry
 
+    @staticmethod
+    def _extract_metadata(msg: dict[str, Any]) -> dict[str, Any]:
+        """Extract extra fields from a raw message dict beyond role/content."""
+        known = {"role", "content"}
+        return {k: v for k, v in msg.items() if k not in known}
+
     def stratify(
         self,
         messages: list[dict[str, Any]],
@@ -148,6 +154,7 @@ class Stratifier:
                 msg.get("role", "user"),
                 msg.get("content", ""),
                 original_index=i,
+                metadata=self._extract_metadata(msg),
             )
 
     def _stratify_heuristic(
@@ -171,6 +178,7 @@ class Stratifier:
                 msg.get("role", "user"),
                 msg.get("content", ""),
                 original_index=i,
+                metadata=self._extract_metadata(msg),
             )
 
     def _classify_single_message(
@@ -227,21 +235,52 @@ class Stratifier:
             content = msg.get("content", "")
             content_str = str(content) if content else ""
 
+            metadata = self._extract_metadata(msg)
             # In template mode, client system messages go to L2 (session)
             # so they cannot poison the stable prefix hash.
             if role == "system":
                 if content_str:
-                    prompt.add_message(LayerType.SESSION, role, content, original_index=i)
+                    prompt.add_message(
+                        LayerType.SESSION,
+                        role,
+                        content,
+                        original_index=i,
+                        metadata=metadata,
+                    )
                 continue
 
             if role in ("assistant", "tool"):
-                prompt.add_message(LayerType.SESSION, role, content, original_index=i)
+                prompt.add_message(
+                    LayerType.SESSION,
+                    role,
+                    content,
+                    original_index=i,
+                    metadata=metadata,
+                )
             elif role == "user" and i == total - 1:
-                prompt.add_message(LayerType.USER, role, content, original_index=i)
+                prompt.add_message(
+                    LayerType.USER,
+                    role,
+                    content,
+                    original_index=i,
+                    metadata=metadata,
+                )
             elif role == "user":
-                prompt.add_message(LayerType.SESSION, role, content, original_index=i)
+                prompt.add_message(
+                    LayerType.SESSION,
+                    role,
+                    content,
+                    original_index=i,
+                    metadata=metadata,
+                )
             else:
-                prompt.add_message(LayerType.SESSION, role, content, original_index=i)
+                prompt.add_message(
+                    LayerType.SESSION,
+                    role,
+                    content,
+                    original_index=i,
+                    metadata=metadata,
+                )
 
     @staticmethod
     def _is_contextual(content: str) -> bool:

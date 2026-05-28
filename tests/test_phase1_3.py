@@ -221,11 +221,11 @@ class TestDifferentToolsDifferentHash:
         assert hash1 != hash2, "Different tools should produce different hashes"
 
 
-class TestToolHashIncludedInPrefixHash:
-    """Test that tool hash is included in prefix_hash calculation."""
+class TestToolHashExcludedFromPrefixHash:
+    """Test that tool hash is excluded from prefix_hash calculation."""
 
-    def test_tool_hash_included_in_prefix_hash(self) -> None:
-        """The prefix_hash should change when tools change."""
+    def test_tool_hash_excluded_from_prefix_hash(self) -> None:
+        """The prefix_hash should NOT change when only tools change."""
         from layercache.models import StratifiedPrompt
 
         # Create two identical prompts
@@ -237,24 +237,10 @@ class TestToolHashIncludedInPrefixHash:
         prompt2.add_message(LayerType.SYSTEM, "system", "You are helpful")
         prompt2.add_message(LayerType.CONTEXT, "system", "You have tools")
 
-        # Different tools
-        tools1 = [
-            {"type": "function", "function": {"name": "search", "description": "Search"}},
-        ]
-        tools2 = [
-            {"type": "function", "function": {"name": "fetch", "description": "Fetch"}},
-        ]
+        prefix_hash1 = prompt1.prefix_hash()
+        prefix_hash2 = prompt2.prefix_hash()
 
-        canonicalizer = Canonicalizer()
-        prompt1_canon, tools1_canon = canonicalizer.canonicalize(prompt1, tools1)
-        prompt2_canon, tools2_canon = canonicalizer.canonicalize(prompt2, tools2)
-
-        # The prefix hashes should be different because tools are different
-        # Pass tools to prefix_hash() to include tool_hash in calculation
-        hash1 = prompt1_canon.prefix_hash(tools1_canon)
-        hash2 = prompt2_canon.prefix_hash(tools2_canon)
-
-        assert hash1 != hash2, "prefix_hash should change when tools change"
+        assert prefix_hash1 == prefix_hash2, "prefix_hash should be the same for identical prompts regardless of tools"
 
 
 class TestCacheHitRateImprovement:
@@ -294,10 +280,9 @@ class TestCacheHitRateImprovement:
 
         assert json1 == json2, "Same tools in different order should canonicalize to identical JSON"
 
-        # Note: prefix_hash equality test will fail until tool_hash is implemented
-        # hash1 = prompt1.prefix_hash()
-        # hash2 = prompt2.prefix_hash()
-        # assert hash1 == hash2, "Same tools should produce same prefix_hash for cache hits"
+        hash1 = prompt1.prefix_hash()
+        hash2 = prompt2.prefix_hash()
+        assert hash1 == hash2, "Same content should produce same prefix_hash regardless of tool canonicalization"
 
 
 class TestEdgeCases:

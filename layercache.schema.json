@@ -23,6 +23,34 @@
           "default": null,
           "description": "Max L2 tokens before truncation (null = no limit)",
           "title": "Max Session Tokens"
+        },
+        "prefix_hash_max_tokens": {
+          "default": 250,
+          "description": "Max L0 tokens included in prefix hash. Truncating to the first N tokens excludes per-project context (CLAUDE.md, AGENTS.md) that's appended after the stable boilerplate, enabling cross-project cache hits.",
+          "maximum": 4096,
+          "minimum": 50,
+          "title": "Prefix Hash Max Tokens",
+          "type": "integer"
+        },
+        "truncation_strategy": {
+          "default": "recent",
+          "description": "Truncation strategy for session management (semantic deferred to v1.6)",
+          "pattern": "^(recent|important|trim|semantic)$",
+          "title": "Truncation Strategy",
+          "type": "string"
+        },
+        "token_counter": {
+          "default": "tiktoken",
+          "description": "Token counting method (tiktoken = accurate, char_estimate = fast approx)",
+          "pattern": "^(tiktoken|char_estimate)$",
+          "title": "Token Counter",
+          "type": "string"
+        },
+        "litellm_model": {
+          "default": "gpt-4o",
+          "description": "Model for LiteLLM trim_messages (trim strategy)",
+          "title": "Litellm Model",
+          "type": "string"
         }
       },
       "title": "CachingConfig",
@@ -97,6 +125,47 @@
       "title": "MetricsConfig",
       "type": "object"
     },
+    "MultiTierConfig": {
+      "description": "Multi-tier caching configuration.",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "description": "Enable multi-tier cache hierarchy (semantic \u2192 prefix \u2192 inference)",
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "validation_latency_budget_ms": {
+          "default": 50,
+          "description": "Maximum validation latency budget in milliseconds (p95)",
+          "minimum": 1,
+          "title": "Validation Latency Budget Ms",
+          "type": "integer"
+        },
+        "probation_threshold": {
+          "default": 10,
+          "description": "Number of successful validations before promotion from probation",
+          "minimum": 1,
+          "title": "Probation Threshold",
+          "type": "integer"
+        },
+        "probation_auto_promotion_seconds": {
+          "default": 3600,
+          "description": "Seconds before auto-promotion from probation regardless of count",
+          "minimum": 60,
+          "title": "Probation Auto Promotion Seconds",
+          "type": "integer"
+        },
+        "max_probation_entries": {
+          "default": 1000,
+          "description": "Maximum entries to keep in probation (LRU eviction)",
+          "minimum": 100,
+          "title": "Max Probation Entries",
+          "type": "integer"
+        }
+      },
+      "title": "MultiTierConfig",
+      "type": "object"
+    },
     "ProviderConfig": {
       "description": "Single LLM provider configuration.",
       "properties": {
@@ -158,6 +227,14 @@
           "default": null,
           "description": "Cache adapter (anthropic, gemini, openai); auto-detected from model name if unset",
           "title": "Adapter"
+        },
+        "model_aliases": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Model name aliases: maps alias -> upstream model name. Applied when the request model matches an alias key.",
+          "title": "Model Aliases",
+          "type": "object"
         }
       },
       "required": [
@@ -237,8 +314,29 @@
           "title": "Db Path",
           "type": "string"
         },
+        "redis_url": {
+          "default": "redis://localhost:6379/0",
+          "description": "Redis connection URL (used when backend=redis)",
+          "title": "Redis Url",
+          "type": "string"
+        },
+        "redis_pool_size": {
+          "default": 10,
+          "description": "Redis connection pool size",
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Redis Pool Size",
+          "type": "integer"
+        },
+        "redis_timeout": {
+          "default": 5.0,
+          "description": "Redis socket timeout in seconds",
+          "exclusiveMinimum": 0,
+          "title": "Redis Timeout",
+          "type": "number"
+        },
         "default_ttl": {
-          "default": 300,
+          "default": 3600,
           "description": "Default TTL in seconds (0 = no expiry)",
           "minimum": 0,
           "title": "Default Ttl",
@@ -257,6 +355,22 @@
           "description": "FastEmbed model for query embeddings",
           "title": "Embedder",
           "type": "string"
+        },
+        "session_id_header": {
+          "default": "X-Session-ID",
+          "description": "HTTP header name for session ID (opt-in isolation)",
+          "title": "Session Id Header",
+          "type": "string"
+        },
+        "session_id_auto_generate": {
+          "default": false,
+          "description": "Auto-generate session ID if not provided (breaks cross-request cache hits)",
+          "title": "Session Id Auto Generate",
+          "type": "boolean"
+        },
+        "multi_tier": {
+          "$ref": "#/$defs/MultiTierConfig",
+          "description": "Multi-tier caching hierarchy settings"
         }
       },
       "title": "SemanticCacheConfig",

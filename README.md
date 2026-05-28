@@ -1,7 +1,7 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.5.0-blue" alt="Version 1.5.0">
+  <img src="https://img.shields.io/badge/version-1.7.0-blue" alt="Version 1.7.0">
   <img src="https://img.shields.io/badge/python-3.11+-green" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-162%20passing-brightgreen" alt="162 Tests Passing">
+  <img src="https://img.shields.io/badge/tests-243%20passing-brightgreen" alt="243 Tests Passing">
   <img src="https://img.shields.io/github/actions/workflow/status/ZeroClue/layercache/ci.yml?branch=main" alt="CI">
   <img src="https://img.shields.io/badge/license-MIT-orange" alt="MIT License">
 </p>
@@ -58,6 +58,8 @@ In the background, LayerCache:
 | Repeated similar queries waste tokens and money | Semantic cache with embedding similarity matching bypasses the LLM for near-duplicate queries |
 | Long conversations grow an unbounded prefix, reducing cache effectiveness | Automatic L2 session truncation keeps only the last N tokens of conversation history |
 | Silent cache misses with no diagnostic | Runtime warning when L0+L1+L2 is below the provider caching threshold (~1024 tokens) |
+| Cross-conversation semantic cache hits near zero due to session history in the cache key | Prefix hash redesigned to L0+L1 only — L2 and session_id excluded from the cache key |
+| Model names differ between provider listing and upstream API | Configurable model aliases + automatic upstream model discovery |
 
 ## Core Concept: The Layered Prompt Architecture
 
@@ -335,6 +337,11 @@ providers:
   deepseek:
     api_key_env: DEEPSEEK_API_KEY          # Any LiteLLM provider works
     # adapter: openai                      # Override cache strategy (auto-detected if unset)
+  opencode-go:
+    api_key_env: OPENCODE_ZEN_API_KEY
+    base_url: https://opencode.ai/zen/v1
+    model_aliases:                         # Optional: map client model names to upstream names
+      deepseek-v4-flash: deepseek-v4-flash-free
 
 caching:
   semantic:
@@ -346,8 +353,9 @@ caching:
     default_ttl: 300                # 5 minutes
     similarity_threshold: 0.95      # Cosine similarity for semantic cache
     embedder: "BAAI/bge-small-en-v1.5"
-    session_isolation: true         # Prevent cross-session cache pollution
+    session_id_header: X-Session-ID  # Header for opt-in session isolation
   max_session_tokens: 2000          # Optional: truncate L2 to keep within token budget
+  prefix_hash_max_tokens: 250       # Max L0 tokens for cache key (excludes per-project context)
   truncation_strategy: "recent"     # or "important" (score-based)
   metrics:
     db_path: /data/metrics.db       # Time-series snapshot storage
@@ -364,6 +372,24 @@ enhancements:
         vector_store: /data/few_shots/examples.json
         top_k: 3
 ```
+
+### Model Aliases
+
+When a proxy sits between the client and the upstream API, model names sent by the client may differ from the names the upstream accepts (e.g., the AI SDK strips provider prefixes like `opencode-go/`). LayerCache supports two resolution mechanisms:
+
+1. **Explicit aliases** (`model_aliases` in `ProviderConfig`): Maps a client-side model name to an upstream name.
+2. **Auto-discovery**: On startup, LayerCache fetches `GET /v1/models` from each configured provider's `base_url` and builds a reverse index. If a requested model name isn't in the upstream list but matches a single ID by prefix (e.g., `deepseek-v4-flash` → `deepseek-v4-flash-free`), it resolves automatically.
+
+```yaml
+providers:
+  opencode-go:
+    api_key_env: OPENCODE_ZEN_API_KEY
+    base_url: https://opencode.ai/zen/v1
+    model_aliases:                   # Explicit overrides (optional)
+      deepseek-v4-flash: deepseek-v4-flash-free
+```
+
+Auto-discovery requires `api_key_env` to be set so the model list endpoint can be authenticated. If both an explicit alias and an auto-discovered match exist, the explicit alias takes precedence.
 
 ### Environment Variables
 

@@ -101,15 +101,15 @@ class TestPrefixHashStability:
 
         assert prompt1.prefix_hash() != prompt2.prefix_hash()
 
-    def test_session_isolation_affects_hash(self):
-        """Different session_id produces different prefix_hash."""
+    def test_session_id_does_not_affect_hash(self):
+        """Different session_id produces SAME prefix_hash (L0+L1 only)."""
         prompt1 = StratifiedPrompt(session_id="session1")
         prompt1.add_message(LayerType.SYSTEM, "system", "System instruction")
 
         prompt2 = StratifiedPrompt(session_id="session2")
         prompt2.add_message(LayerType.SYSTEM, "system", "System instruction")
 
-        assert prompt1.prefix_hash() != prompt2.prefix_hash()
+        assert prompt1.prefix_hash() == prompt2.prefix_hash()
 
 
 class TestPrefixThresholdValidation:

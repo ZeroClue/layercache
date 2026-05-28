@@ -163,12 +163,10 @@ caching:
     redis_timeout: 5.0
     default_ttl: 3600
     similarity_threshold: 0.95
-    session_isolation: true
     session_id_header: "X-Session-ID"
-    session_id_auto_generate: true
+    session_id_auto_generate: false
   max_session_tokens: 8192
-  truncation_strategy: "recent"
-```
+
 
 ### Start the Stack
 
@@ -288,7 +286,7 @@ vm.overcommit_memory = 1
 | `redis_timeout` | float | `5.0` | Socket timeout in seconds |
 | `default_ttl` | int | `3600` | Default cache TTL in seconds (0 = no expiry) |
 | `similarity_threshold` | float | `0.95` | Minimum cosine similarity for cache hit |
-| `session_isolation` | bool | `true` | Isolate cache entries by session ID |
+| `session_id_header` | string | `X-Session-ID` | HTTP header for session isolation (opt-in) |
 
 ### Redis URL Formats
 
@@ -377,27 +375,17 @@ layercache:index:{prefix_hash}                # Sorted set index (session-scoped
 layercache:ttl:{entry_id}                     # TTL expiration tracking
 ```
 
-### Configuration Options
+### Session Isolation (opt-in via header)
+
+Send `X-Session-ID: <uuid>` with requests to isolate cache entries per session.
+Without the header, cache entries are shared across all sessions (cross-conversation hits).
 
 ```yaml
 caching:
   semantic:
-    session_isolation: true           # Enable session isolation
     session_id_header: "X-Session-ID" # Header name to read
-    session_id_auto_generate: true    # Generate UUID if header missing
+    session_id_auto_generate: false    # Don't auto-generate (let clients opt in)
 ```
-
-### Disabling Session Isolation
-
-For use cases where cache sharing is desired (e.g., common knowledge base):
-
-```yaml
-caching:
-  semantic:
-    session_isolation: false
-```
-
-**Warning:** Disabling isolation may cause cross-session cache pollution. Only disable for stateless queries.
 
 ### Session ID Best Practices
 

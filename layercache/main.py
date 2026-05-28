@@ -241,10 +241,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         timeout=timeout,
         max_retries=max_retries,
         max_session_tokens=_settings.caching.max_session_tokens,
+        prefix_hash_max_tokens=_settings.caching.prefix_hash_max_tokens,
         providers_config=_settings.providers,
         truncation_strategy=_settings.caching.truncation_strategy,
         litellm_model=_settings.caching.litellm_model,
     )
+
+    await _pipeline.initialize()
 
     # Start background metrics snapshot task
     async def _snapshot_loop() -> None:
@@ -399,8 +402,18 @@ app.include_router(dashboard_router)
 
 
 @app.middleware("http")
-async def add_request_id(request: Request, call_next: Any) -> Response:
-    """Inject a unique request ID for tracing."""
+async def log_request_body(request: Request, call_next: Any) -> Response:
+    """Log request body and headers for POST requests (debug)."""
+    if request.method == "POST" and _settings and _settings.proxy.log_level == "debug":
+        body_bytes = await request.body()
+        body_str = body_bytes.decode("utf-8", errors="replace")[:2048]
+        auth_preview = (request.headers.get("authorization", "") or "")[:30]
+        print(
+            f"POST {request.url.path} | content-type={request.headers.get('content-type')} | "
+            f"content-length={request.headers.get('content-length')} | "
+            f"auth={auth_preview} | Body(2K): {body_str}",
+            flush=True,
+        )
     request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
     request.state.request_id = request_id
     response: Response = await call_next(request)
@@ -472,6 +485,15 @@ async def chat_completions(
     in the request body (lc_enhancements, lc_template, lc_cache_ttl, etc.).
     """
     await _verify_proxy_key(authorization)
+
+    # Debug: log request info (redacting sensitive headers)
+    if _settings and _settings.proxy.log_level == "debug":
+        print(
+            f"POST chat | user-agent={request.headers.get('user-agent', '')[:60]} | "
+            f"x-opencode-client={request.headers.get('x-opencode-client', '')} | "
+            f"auth={str(authorization)[:20] if authorization else 'none'}",
+            flush=True,
+        )
 
     # Reject oversized request bodies early (SSRF + OOM guard)
     body_size = len(await request.body())
@@ -570,12 +592,19 @@ async def _handle_streaming(lc_request: LayerCacheRequest, api_key: str) -> Asyn
                 yield f"data: {data}\n\n"
             elif isinstance(chunk, str):
                 yield f"data: {json.dumps({'choices': [{'delta': {'content': chunk}}]})}\n\n"
-    except Exception:
+    except GeneratorExit:
+        return
+    except BaseException:
         logger.exception("Streaming pipeline failed")
         error_body = json.dumps({"error": {"message": "Streaming error", "type": "stream_error"}})
-        yield f"data: {error_body}\n\n"
-    finally:
+        try:
+            yield f"data: {error_body}\n\n"
+        except GeneratorExit:
+            return
+    try:
         yield "data: [DONE]\n\n"
+    except GeneratorExit:
+        pass
 
 
 # --- Anthropic-Compatible Endpoint ---
@@ -730,7 +759,9 @@ async def _handle_anthropic_stream(
                 },
             )
             yield _sse("message_stop", {"type": "message_stop"})
-    except Exception:
+    except GeneratorExit:
+        return
+    except BaseException:
         logger.exception("Anthropic streaming failed")
         error_body = json.dumps(
             {
@@ -738,7 +769,10 @@ async def _handle_anthropic_stream(
                 "error": {"type": "api_error", "message": "Streaming error"},
             }
         )
-        yield f"event: error\ndata: {error_body}\n\n"
+        try:
+            yield f"event: error\ndata: {error_body}\n\n"
+        except GeneratorExit:
+            pass
 
 
 @app.get("/v1/models")

@@ -44,6 +44,11 @@ class ProviderConfig(BaseModel):
         description=f"Cache adapter ({', '.join(sorted(VALID_ADAPTERS))}); "
         "auto-detected from model name if unset",
     )
+    model_aliases: dict[str, str] = Field(
+        default_factory=dict,
+        description="Model name aliases: maps alias -> upstream model name. "
+        "Applied when the request model matches an alias key.",
+    )
 
 
 class ProvidersConfig(RootModel[dict[str, ProviderConfig]]):
@@ -147,17 +152,13 @@ class SemanticCacheConfig(BaseModel):
         default="BAAI/bge-small-en-v1.5",
         description="FastEmbed model for query embeddings",
     )
-    session_isolation: bool = Field(
-        default=True,
-        description="Isolate cache entries by session ID (prevents cross-session pollution)",
-    )
     session_id_header: str = Field(
         default="X-Session-ID",
-        description="HTTP header name for session ID (auto-generated if missing)",
+        description="HTTP header name for session ID (opt-in isolation)",
     )
     session_id_auto_generate: bool = Field(
-        default=True,
-        description="Auto-generate session ID if not provided by client",
+        default=False,
+        description="Auto-generate session ID if not provided (breaks cross-request cache hits)",
     )
     multi_tier: MultiTierConfig = Field(
         default_factory=MultiTierConfig,
@@ -193,6 +194,15 @@ class CachingConfig(BaseModel):
     max_session_tokens: int | None = Field(
         default=None,
         description="Max L2 tokens before truncation (null = no limit)",
+    )
+    prefix_hash_max_tokens: int = Field(
+        default=250,
+        ge=50,
+        le=4096,
+        description="Max L0 tokens included in prefix hash. "
+        "Truncating to the first N tokens excludes per-project context "
+        "(CLAUDE.md, AGENTS.md) that's appended after the stable boilerplate, "
+        "enabling cross-project cache hits.",
     )
     truncation_strategy: str = Field(
         default="recent",

@@ -159,10 +159,10 @@ class TestTruncationEdgeCases:
 
 
 class TestSessionIsolationWithTruncation:
-    """Test that truncation respects session isolation."""
+    """Test that truncation works with prefix hash changes."""
 
-    def test_different_sessions_different_hashes_after_truncation(self):
-        """Truncated prompts from different sessions have different hashes."""
+    def test_different_sessions_same_hash_after_truncation(self):
+        """Truncated prompts from different sessions have SAME hash (L0+L1 only)."""
         prompt1 = StratifiedPrompt(session_id="session-1")
         prompt1.add_message(LayerType.SESSION, "user", "Message 1")
         prompt1.add_message(LayerType.SESSION, "assistant", "Response 1")
@@ -176,8 +176,8 @@ class TestSessionIsolationWithTruncation:
         truncator.truncate(prompt1, max_tokens=50)
         truncator.truncate(prompt2, max_tokens=50)
 
-        # Hashes should be different due to session_id
-        assert prompt1.prefix_hash() != prompt2.prefix_hash()
+        # Hashes should be same (session_id excluded from hash)
+        assert prompt1.prefix_hash() == prompt2.prefix_hash()
 
     def test_same_session_same_hash_after_truncation(self):
         """Same session produces same hash after truncation."""

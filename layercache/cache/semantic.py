@@ -79,6 +79,7 @@ class SemanticCache:
                 query_embedding BLOB NOT NULL,
                 response_payload TEXT NOT NULL,
                 model TEXT NOT NULL,
+                tool_hash TEXT NOT NULL DEFAULT '',
                 ttl_expires_at REAL NOT NULL,
                 created_at REAL NOT NULL
             )
@@ -105,21 +106,37 @@ class SemanticCache:
             await self._db.close()
             self._db = None
 
-    def _hash_prefix(self, prompt: StratifiedPrompt) -> str:
-        """Compute exact-match hash of the stable prefix (L0+L1+L2)."""
-        return prompt.prefix_hash()
+    def _hash_prefix(self, prompt: StratifiedPrompt, max_l0_tokens: int | None = None) -> str:
+        """Compute exact-match hash of the stable prefix (L0+L1)."""
+        return prompt.prefix_hash(max_l0_tokens=max_l0_tokens)
 
-    async def lookup(self, prompt: StratifiedPrompt, model: str = "") -> CacheEntry | None:
+    def _compute_tool_hash(self, tools: list[dict] | None) -> str:
+        """Compute a deterministic hash of the tool definitions."""
+        from ..serializers.tool_serializer import ToolSerializer
+
+        return ToolSerializer.compute_tool_hash(tools)
+
+    async def lookup(
+        self,
+        prompt: StratifiedPrompt,
+        model: str = "",
+        tools: list[dict] | None = None,
+        max_l0_tokens: int | None = None,
+    ) -> CacheEntry | None:
         """Look up a cached response for the given prompt.
 
         A cache hit requires:
         1. Prefix hash match (exact)
         2. Query embedding similarity > threshold
         3. TTL not expired
+        4. Tool hash match (or both have no tools)
 
         Args:
             prompt: The stratified prompt to look up.
-            model: The model name (used for additional matching).
+            model: The model name.
+            tools: Optional tool definitions. Used as secondary match filter.
+            max_l0_tokens: If set, L0 content is truncated to this many
+                tokens before hashing (excludes per-project context).
 
         Returns:
             A CacheEntry if found, None otherwise.
@@ -127,7 +144,7 @@ class SemanticCache:
         if self._db is None:
             return None
 
-        prefix_hash = self._hash_prefix(prompt)
+        prefix_hash = self._hash_prefix(prompt, max_l0_tokens=max_l0_tokens)
         query_text = prompt.get_user_query()
 
         if not query_text:
@@ -138,17 +155,19 @@ class SemanticCache:
         if query_embedding is None:
             return None
 
-        # Find all cache entries with matching prefix hash
+        tool_hash = self._compute_tool_hash(tools)
+
+        # Find all cache entries with matching prefix hash and tool hash
         now = time.time()
         cursor = await self._db.execute(
             """
             SELECT id, prefix_hash, query_text, query_embedding, response_payload,
-                   model, ttl_expires_at, created_at
+                   model, tool_hash, ttl_expires_at, created_at
             FROM semantic_cache
-            WHERE prefix_hash = ? AND ttl_expires_at > ?
+            WHERE prefix_hash = ? AND tool_hash = ? AND ttl_expires_at > ?
             ORDER BY created_at DESC
             """,
-            (prefix_hash, now),
+            (prefix_hash, tool_hash, now),
         )
         rows = await cursor.fetchall()
 
@@ -169,6 +188,7 @@ class SemanticCache:
                     query_embedding=stored_embedding,
                     response_payload=json.loads(row["response_payload"]),
                     model=row["model"],
+                    tool_hash=row["tool_hash"],
                     ttl_expires_at=row["ttl_expires_at"],
                     created_at=row["created_at"],
                 )
@@ -190,6 +210,8 @@ class SemanticCache:
         response: dict[str, Any],
         model: str,
         ttl: int | None = None,
+        tools: list[dict] | None = None,
+        max_l0_tokens: int | None = None,
     ) -> str:
         """Store a response in the semantic cache.
 
@@ -198,6 +220,9 @@ class SemanticCache:
             response: The LLM response to cache.
             model: The model that generated the response.
             ttl: TTL in seconds. Uses default if None.
+            tools: Optional tool definitions. Stored for secondary match.
+            max_l0_tokens: If set, L0 content was truncated to this many
+                tokens before hashing (must match lookup value for consistency).
 
         Returns:
             The cache entry ID.
@@ -205,7 +230,7 @@ class SemanticCache:
         if self._db is None:
             return ""
 
-        prefix_hash = self._hash_prefix(prompt)
+        prefix_hash = self._hash_prefix(prompt, max_l0_tokens=max_l0_tokens)
         query_text = prompt.get_user_query()
 
         if not query_text:
@@ -214,6 +239,8 @@ class SemanticCache:
         query_embedding = await self._get_embedding(query_text)
         if query_embedding is None:
             return ""
+
+        tool_hash = self._compute_tool_hash(tools)
 
         entry_id = hashlib.sha256(f"{prefix_hash}:{query_text}:{time.time()}".encode()).hexdigest()
 
@@ -224,8 +251,8 @@ class SemanticCache:
             """
             INSERT INTO semantic_cache
             (id, prefix_hash, query_text, query_embedding, response_payload,
-             model, ttl_expires_at, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             model, tool_hash, ttl_expires_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 entry_id,
@@ -234,6 +261,7 @@ class SemanticCache:
                 json.dumps(query_embedding),
                 json.dumps(response),
                 model,
+                tool_hash,
                 now + effective_ttl,
                 now,
             ),

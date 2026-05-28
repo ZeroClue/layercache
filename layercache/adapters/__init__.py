@@ -84,6 +84,29 @@ def detect_provider(
         if model_lower.startswith(known_prefix):
             return provider
 
+    # Fallback: model has no provider prefix and no known pattern matched.
+    # If "openai" is not explicitly configured with a base_url, check
+    # other configured providers. This handles AI SDK providers that
+    # strip their prefix from the model name (e.g. opencode-go sends
+    # "deepseek-v4-flash" instead of "opencode-go/deepseek-v4-flash").
+    if providers_config:
+        openai_cfg = providers_config.root.get("openai")
+        if not openai_cfg or not openai_cfg.base_url:
+            known_openai_prefixes = {
+                "gpt-",
+                "chatgpt-",
+                "o1-",
+                "o3-",
+                "o4-",
+                "text-embedding-",
+                "tts-",
+                "whisper-",
+            }
+            if not any(model_lower.startswith(p) for p in known_openai_prefixes):
+                for key, cfg in providers_config.root.items():
+                    if key != "openai" and cfg.base_url:
+                        return key
+
     # Default to OpenAI
     return "openai"
 

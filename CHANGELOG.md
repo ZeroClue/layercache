@@ -1,6 +1,136 @@
-# v1.5.0 Release Notes
+# v1.7.0 Release Notes
 
-**Version:** 1.5.0  
+**Version:** 1.7.0  
+**Release Date:** May 28, 2026  
+**Status:** ✅ **READY FOR RELEASE**
+
+---
+
+## What's New
+
+LayerCache v1.7.0 introduces cross-conversation semantic response caching, model name auto-resolution, and critical message pipeline fixes for production reliability with tool-calling LLMs.
+
+---
+
+## Major Features
+
+### 1. Cross-Conversation Cache Key Redesign 🔑
+
+The prefix hash cache key has been redesigned from `L0 + L1 + L2 + session_id` to **L0 + L1 only**, enabling semantic cache hits across different sessions and conversation histories. Provider KV caching (Anthropic prompt caching, OpenAI prefix caching) continues to handle intra-session token-level reuse.
+
+**Changes:**
+- `prefix_hash()` now excludes L2 (session history) and `session_id` entirely
+- `session_id_auto_generate` defaults to `False` (auto-generated UUIDs made cache hits impossible)
+- `session_isolation` field removed (dead code)
+
+**Benefits:**
+- Cache hit rate no longer resets to zero every conversation turn
+- Cross-project cache hits when system prompts share a common prefix
+- Backward compatible — `prefix_hash_max_tokens` defaults to 250 for safe truncation
+
+### 2. Model Name Auto-Resolution 🔄
+
+When using LayerCache as a proxy for the AI SDK, model names arrive without their provider prefix (e.g., `deepseek-v4-flash` instead of `opencode-go/deepseek-v4-flash`). LayerCache now resolves these automatically:
+
+- **Explicit aliases** in `layercache.yaml` (`model_aliases` per provider)
+- **Auto-discovery** — fetches the upstream `GET /v1/models` list at startup and builds a reverse index
+- If a requested name isn't in the upstream list but matches a single ID by prefix (e.g., `deepseek-v4-flash` → `deepseek-v4-flash-free`), it resolves automatically
+
+### 3. Message Pipeline Reliability Fixes 🛠️
+
+Several bugs in the message processing pipeline were fixed to ensure correct behavior with tool-calling conversations:
+
+- `tool_call_id` and `tool_calls` fields preserved through stratification (was silently dropped)
+- Message ordering in L2-L4 now uses `original_index` instead of `content_hash` (ordering matters for tool/assistant sequences)
+- GeneratorExit bug fixed in streaming handlers (async generator cleanup crash)
+- LayerCacheRequest `messages` `max_length=512` removed (prevented long-running sessions)
+
+---
+
+## Documentation
+
+### Design Docs
+
+1. **Cache Key Redesign** (`docs/designs/v2-cache-key-redesign.md`)
+   - Full design spec for L0+L1-only prefix hash
+   - Paper research summary (6 papers converge on system-prompt-only caching)
+   
+2. **L0/L1 System Prompt Audit** (`docs/designs/l0-l1-audit.md`)
+   - Analysis of opencode and Claude Code system prompt structure
+   - Truncation rationale for `prefix_hash_max_tokens`
+
+### Updated Guides
+
+- `README.md` — Model aliases documentation, updated badges (243 tests)
+- `layercache.yaml` — Model aliases for free-tier models
+
+---
+
+## Breaking Changes
+
+**Minor:**
+- `session_id_auto_generate` default changed from `True` to `False`. Auto-generated session IDs prevented cache hits. Users relying on auto-generated session IDs must set `session_id_auto_generate: true` explicitly.
+- `session_isolation` config field removed (was never wired to `prefix_hash()`).
+
+---
+
+## Full Changelog
+
+### v1.7.0 (2026-05-28)
+
+**Added:**
+- Model aliases config (`model_aliases` in `ProviderConfig`) — `layercache/config.py`
+- Upstream model auto-discovery at startup (`GET /v1/models`) — `layercache/pipeline.py`
+- `_resolve_model()` in pipeline for automatic model name resolution — `layercache/pipeline.py`
+- Prefix hash bucket metrics (bucket count, avg turns, lookups) — `layercache/metrics/collector.py`, dashboard
+- Design docs: `docs/designs/v2-cache-key-redesign.md`, `docs/designs/l0-l1-audit.md`
+- Prefix hash bucket stat cards on dashboard — `layercache/dashboard/templates/cache.html`
+- `provider` argument passed through `_stream_llm()` and `_call_llm()` for config-aware resolution
+- `_normalize_content()` applied before `prefix_hash()` hashing (always-on)
+
+**Changed:**
+- `prefix_hash()` redesigned: L0+L1 only (L2, session_id, tools_hash excluded from hash) — `layercache/models.py`
+- `tools_hash` softened to secondary SQL filter (stored per entry, exact-match on lookup)
+- `prefix_hash_max_tokens` truncates L0 to first N tokens via tiktoken before hashing — `layercache/models.py`
+- `_reassemble_with_metadata()` uses `original_index` for L2-L4 ordering — `layercache/adapters/base.py`
+- `reassemble()` uses `original_index` for L2-L4 ordering (preserves tool sequences) — `layercache/models.py`
+- `detect_provider()` fallback logic: checks configured providers with `base_url` when model has no prefix
+- `session_id_auto_generate` default: `True` → `False`
+- Debug logging gated on `log_level: debug` (reduced noise at info level)
+- Model validation regex relaxed to allow dots in prefix part (`[a-zA-Z0-9_.-]`)
+- `LayerCacheRequest.messages` `max_length=512` removed
+
+**Fixed:**
+- `tool_call_id` and `tool_calls` metadata now preserved through stratification — `layercache/stratifier.py`
+- `GeneratorExit` in streaming handlers — `layercache/main.py` (`_handle_streaming`, `_handle_anthropic_stream`)
+- Pipeline `initialize()` never called (probation tracker + model discovery not running)
+- Streaming store, passthrough API key, None metrics crash, config key normalization
+- Health endpoint shows real version from `__version__` (1.7.0)
+- Semantic cache tracks token/cost savings feeding analytics
+- Cache and metrics DBs persist across restarts (volume mount)
+
+**Removed:**
+- `session_isolation` field from config (dead code, never wired to hash)
+
+---
+
+## Contributors
+
+- LayerCache Team
+- Review Agent (deepseek-v4-flash)
+
+---
+
+**Download:**
+- PyPI: `pip install layercache==1.7.0`
+- Docker: `ghcr.io/zeroclue/layercache:1.7.0`
+- GitHub: https://github.com/zeroclue/layercache/releases/tag/v1.7.0
+
+---
+
+# v1.6.0 Release Notes
+
+**Version:** 1.6.0  
 **Release Date:** May 27, 2026  
 **Status:** ✅ **READY FOR RELEASE**
 

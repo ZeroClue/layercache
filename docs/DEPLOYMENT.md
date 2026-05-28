@@ -164,7 +164,7 @@ caching:
     default_ttl: 300                     # Default cache TTL in seconds
     similarity_threshold: 0.95           # Minimum cosine similarity for cache hit
     embedder: "BAAI/bge-small-en-v1.5"  # FastEmbed model name
-    session_isolation: true              # Prevent cross-session cache pollution
+    session_id_header: X-Session-ID      # Header for opt-in session isolation
 
   metrics:
     db_path: /data/metrics.db            # Path to metrics SQLite DB
@@ -362,7 +362,7 @@ For production deployments requiring horizontal scaling:
 1. **Enable Redis backend** — Configure `caching.semantic.backend: "redis"` in `layercache.yaml`
 2. **Deploy Redis** — Use Redis Cluster or Sentinel for high availability (see [Redis Setup Guide](redis-setup.md))
 3. **Load Balance** — Place multiple LayerCache instances behind an L4 load balancer
-4. **Session Isolation** — Enable `session_isolation: true` to prevent cross-session cache pollution
+4. **Session Isolation** — Send `X-Session-ID` header to isolate cache entries per session
 5. **Centralized Metrics** — Point all instances at the same Prometheus server
 
 See the [Migration Guide](migration-sqlite-to-redis.md) for zero-downtime migration from SQLite to Redis.

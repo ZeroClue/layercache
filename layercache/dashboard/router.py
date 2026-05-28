@@ -226,10 +226,25 @@ async def cache_page(request: Request) -> HTMLResponse | RedirectResponse:
         except Exception:
             logger.exception("Failed to read cache stats")
 
+    metrics = getattr(request.app.state, "metrics", None)
+    bucket_count = 0
+    avg_turns = 0.0
+    cache_lookups = 0
+    if metrics:
+        raw = metrics.get_metrics()
+        bucket_count = raw.get("prefix_hash_bucket_count", 0)
+        avg_turns = raw.get("avg_turns_per_bucket", 0.0)
+        cache_lookups = raw.get("cache_lookups_total", 0)
+
     return templates.TemplateResponse(
         request=request,
         name="cache.html",
-        context={"cache_stats": stats},
+        context={
+            "cache_stats": stats,
+            "bucket_count": bucket_count,
+            "avg_turns": avg_turns,
+            "cache_lookups": cache_lookups,
+        },
     )
 
 

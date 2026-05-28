@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import time
 from collections.abc import AsyncIterator
@@ -38,7 +39,7 @@ from .truncation import TokenCounter, TruncationStrategy, Truncator
 logger = logging.getLogger(__name__)
 
 # Model names must match known provider prefixes to block SSRF via LiteLLM
-_ALLOWED_MODEL_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]*(/[a-zA-Z][a-zA-Z0-9_.-]+)?$")
+_ALLOWED_MODEL_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_.-]*(/[a-zA-Z][a-zA-Z0-9_.-]+)?$")
 
 
 def validate_model_name(model: str) -> None:
@@ -83,6 +84,7 @@ class RequestPipeline:
         timeout: int = 120,
         max_retries: int = 3,
         max_session_tokens: int | None = None,
+        prefix_hash_max_tokens: int = 250,
         providers_config: ProvidersConfig | None = None,
         truncation_strategy: str = "recent",
         litellm_model: str = "gpt-4o",
@@ -97,7 +99,9 @@ class RequestPipeline:
         self._timeout = timeout
         self._max_retries = max_retries
         self._max_session_tokens = max_session_tokens
+        self._prefix_hash_max_tokens = prefix_hash_max_tokens
         self._providers_config = providers_config
+        self._upstream_models: dict[str, set[str]] = {}
 
         # Truncation
         strategy = TruncationStrategy(truncation_strategy.lower())
@@ -120,9 +124,54 @@ class RequestPipeline:
             self._probation_tracker = ProbationTracker(db_path=semantic_cache.db_path)
 
     async def initialize(self) -> None:
-        """Initialize async components (probation tracker)."""
+        """Initialize async components (probation tracker, upstream model discovery)."""
         if self._probation_tracker:
             await self._probation_tracker.initialize()
+        await self._discover_upstream_models()
+
+    async def _discover_upstream_models(self) -> None:
+        """Fetch available model IDs from each provider's upstream API.
+
+        Cached in self._upstream_models for auto-resolution in _resolve_model.
+        Non-fatal: if discovery fails, auto-resolution falls back gracefully.
+        """
+        if not self._providers_config:
+            return
+        import httpx
+
+        for key, cfg in self._providers_config.root.items():
+            if not cfg.base_url:
+                continue
+            api_key = os.environ.get(cfg.api_key_env) if cfg.api_key_env else None
+            models_url = cfg.base_url.rstrip("/") + "/models"
+            try:
+                async with httpx.AsyncClient(timeout=10) as client:
+                    headers = {}
+                    if api_key:
+                        headers["Authorization"] = f"Bearer {api_key}"
+                    resp = await client.get(models_url, headers=headers)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    ids = set()
+                    for m in data.get("data", []):
+                        mid = m.get("id", "")
+                        if mid:
+                            ids.add(mid)
+                    if ids:
+                        self._upstream_models[key] = ids
+                        logger.info(
+                            "Discovered %d upstream models for provider %s from %s",
+                            len(ids),
+                            key,
+                            models_url,
+                        )
+            except Exception as e:
+                logger.debug(
+                    "Failed to discover upstream models for %s (%s): %s",
+                    key,
+                    models_url,
+                    e,
+                )
 
     def _truncate_session(
         self,
@@ -216,11 +265,16 @@ class RequestPipeline:
                 )
 
                 # Canonicalize the temp prompt so its hash matches what will be stored
-                lookup_prompt, _canonical_tools = self.canonicalizer.canonicalize(
+                lookup_prompt, canonical_tools = self.canonicalizer.canonicalize(
                     temp_prompt, request.tools
                 )
 
-                cache_entry = await self.semantic_cache.lookup(lookup_prompt, request.model)
+                cache_entry = await self.semantic_cache.lookup(
+                    lookup_prompt,
+                    request.model,
+                    tools=canonical_tools,
+                    max_l0_tokens=self._prefix_hash_max_tokens,
+                )
                 if cache_entry:
                     # Multi-tier validation (Phase 2.1b)
                     if self._multi_tier_enabled and self._validator:
@@ -256,6 +310,11 @@ class RequestPipeline:
                             model=request.model,
                             input_tokens=hit_input,
                             output_tokens=hit_output,
+                        )
+                        self.metrics.record_cache_lookup(
+                            prefix_hash=lookup_prompt.prefix_hash(),
+                            model=request.model,
+                            hit=True,
                         )
                         logger.info(
                             "Semantic cache HIT for model=%s (prefix=%s...) saved %d+%d tokens",
@@ -294,6 +353,11 @@ class RequestPipeline:
                         return cache_entry.response_payload
 
                 self.metrics.record_semantic_cache_miss()
+                self.metrics.record_cache_lookup(
+                    prefix_hash=lookup_prompt.prefix_hash(),
+                    model=request.model,
+                    hit=False,
+                )
 
             # Stage 2: Stratification
             prompt = self.stratifier.stratify(
@@ -373,6 +437,8 @@ class RequestPipeline:
                         response,
                         request.model,
                         ttl=request.lc_cache_ttl,
+                        tools=canonical_tools,
+                        max_l0_tokens=self._prefix_hash_max_tokens,
                     )
 
                     # Track new entry in probation (Phase 2.1b)
@@ -444,11 +510,16 @@ class RequestPipeline:
                     session_id=request.lc_session_id,
                 )
 
-                lookup_prompt, _canonical_tools = self.canonicalizer.canonicalize(
+                lookup_prompt, canonical_tools = self.canonicalizer.canonicalize(
                     temp_prompt, request.tools
                 )
 
-                cache_entry = await self.semantic_cache.lookup(lookup_prompt, request.model)
+                cache_entry = await self.semantic_cache.lookup(
+                    lookup_prompt,
+                    request.model,
+                    tools=canonical_tools,
+                    max_l0_tokens=self._prefix_hash_max_tokens,
+                )
                 if cache_entry:
                     # Multi-tier validation (Phase 2.1b)
                     if self._multi_tier_enabled and self._validator:
@@ -473,6 +544,11 @@ class RequestPipeline:
                             model=request.model,
                             input_tokens=hit_input,
                             output_tokens=hit_output,
+                        )
+                        self.metrics.record_cache_lookup(
+                            prefix_hash=lookup_prompt.prefix_hash(),
+                            model=request.model,
+                            hit=True,
                         )
                         logger.info(
                             "Semantic cache HIT for streaming request (saved %d+%d tokens)",
@@ -513,6 +589,11 @@ class RequestPipeline:
                         return
 
                 self.metrics.record_semantic_cache_miss()
+                self.metrics.record_cache_lookup(
+                    prefix_hash=lookup_prompt.prefix_hash(),
+                    model=request.model,
+                    hit=False,
+                )
 
             # Stages 2-6: Same as non-streaming
             prompt = self.stratifier.stratify(
@@ -609,6 +690,8 @@ class RequestPipeline:
                         response,
                         request.model,
                         ttl=request.lc_cache_ttl,
+                        tools=canonical_tools,
+                        max_l0_tokens=self._prefix_hash_max_tokens,
                     )
                     if self._multi_tier_enabled and self._probation_tracker and entry_id:
                         await self._probation_tracker.increment_probation_count(entry_id)
@@ -714,6 +797,7 @@ class RequestPipeline:
                     model_name = model.split("/", 1)[1]
                 else:
                     model_name = model
+                model_name = self._resolve_model(model_name, provider)
                 litellm_model = f"{adapter}/{model_name}"
 
             response = await litellm.acompletion(
@@ -725,6 +809,36 @@ class RequestPipeline:
         except Exception as e:
             logger.error("LiteLLM call failed: %s", e)
             raise
+
+    def _resolve_model(self, model: str, provider: str) -> str:
+        """Resolve model name through provider aliases or upstream model list."""
+        if not self._providers_config:
+            return model
+        cfg = self._providers_config.root.get(provider)
+        if not cfg:
+            return model
+        # First check explicit aliases
+        if cfg.model_aliases:
+            resolved = cfg.model_aliases.get(model)
+            if resolved:
+                logger.debug("Model alias: %s -> %s (provider=%s)", model, resolved, provider)
+                return resolved
+        # Auto-resolve: if upstream has a model whose name starts with <model>-,
+        # use that (catches deepseek-v4-flash -> deepseek-v4-flash-free etc.)
+        if cfg.base_url and self._upstream_models.get(provider):
+            upstream_ids = self._upstream_models[provider]
+            if model not in upstream_ids:
+                prefix = f"{model}-"
+                matches = [m for m in upstream_ids if m.startswith(prefix)]
+                if len(matches) == 1:
+                    logger.info(
+                        "Auto-resolved model %s -> %s (provider=%s)",
+                        model,
+                        matches[0],
+                        provider,
+                    )
+                    return matches[0]
+        return model
 
     async def _stream_llm(
         self,
@@ -755,6 +869,7 @@ class RequestPipeline:
                     model_name = model.split("/", 1)[1]
                 else:
                     model_name = model
+                model_name = self._resolve_model(model_name, provider)
                 litellm_model = f"{adapter}/{model_name}"
 
             response = await litellm.acompletion(
@@ -765,6 +880,7 @@ class RequestPipeline:
             async for chunk in response:
                 yield chunk.model_dump()
         except Exception as e:
+            print(f"DEBUG LLM ERROR: {type(e).__name__}: {e}", flush=True)
             logger.error("LiteLLM streaming failed: %s", e)
             raise
 

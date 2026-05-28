@@ -7,8 +7,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from .serializers.tool_serializer import ToolSerializer
-
 
 class LayerType(StrEnum):
     """Prompt layer types in the Layered Prompt Architecture.
@@ -76,7 +74,7 @@ class StratifiedPrompt(BaseModel):
     )
     session_id: str | None = Field(
         default=None,
-        description="Session ID for cache isolation (included in prefix_hash if set)",
+        description="Session ID for metadata/logging (not included in prefix_hash)",
     )
 
     def add_message(
@@ -100,12 +98,22 @@ class StratifiedPrompt(BaseModel):
     def reassemble(self) -> list[dict[str, Any]]:
         """Flatten layers back into standard OpenAI message format (L0 -> L4).
 
-        Messages within the same layer are sorted by content hash for
-        deterministic ordering, ensuring maximum prefix cache hits.
+        L0 and L1 are sorted by content hash for deterministic ordering
+        (stable cache layers). L2-L4 are sorted by original_index to
+        preserve message order (critical for tool_call/tool sequences).
         """
         messages: list[dict[str, Any]] = []
         for layer_type in sorted(LayerType, key=lambda lt: lt.sort_order):
-            layer_msgs = sorted(self.layers[layer_type], key=lambda m: m.content_hash())
+            if layer_type in (LayerType.SYSTEM, LayerType.CONTEXT):
+                layer_msgs = sorted(
+                    self.layers[layer_type],
+                    key=lambda m: m.content_hash(),
+                )
+            else:
+                layer_msgs = sorted(
+                    self.layers[layer_type],
+                    key=lambda m: m.original_index,
+                )
             for msg in layer_msgs:
                 message_dict: dict[str, Any] = {"role": msg.role, "content": msg.content}
                 if msg.metadata:
@@ -117,28 +125,49 @@ class StratifiedPrompt(BaseModel):
         """Get all messages in a specific layer."""
         return self.layers.get(layer, [])
 
-    def prefix_hash(self, tools: list[dict] | None = None) -> str:
-        """Generate a SHA-256 hash of the stable prefix (L0 + L1 + L2).
+    @staticmethod
+    def _normalize_content(content: str) -> str:
+        """Normalize content before hashing for cross-session matching.
+
+        Applies whitespace normalization and redacts common
+        session-specific metadata (timestamps, IDs, etc.).
+        """
+        import re
+
+        content = re.sub(r"\s+", " ", content).strip()
+        content = re.sub(
+            r"(?i)(timestamp|date|time|session[_-]?id|request[_-]?id):\s*\S+",
+            r"\1:__REDACTED__",
+            content,
+        )
+        return content
+
+    def prefix_hash(self, max_l0_tokens: int | None = None) -> str:
+        """Generate a SHA-256 hash of the stable prefix (L0 + L1).
 
         Used as the exact-match key for the semantic cache.
-        If session_id is set, it's included in the hash for session isolation.
-        If tools are provided, their deterministic hash is included for tool-aware caching.
+        L2 (session history), session_id, and tools are excluded from the hash
+        to enable cross-conversation cache hits. Provider KV caching
+        handles intra-session token-level prefix reuse.
+
+        If max_l0_tokens is set, L0 content is truncated to the first N tokens
+        before hashing. This excludes per-project context (CLAUDE.md, AGENTS.md)
+        that is appended after the stable boilerplate, enabling cross-project
+        cache hits without a template registry.
 
         Args:
-            tools: Optional list of tool definitions. If provided, included in hash.
+            max_l0_tokens: Maximum tokens to include from L0 content.
+                Variable content appended after this limit is excluded from
+                the hash.
 
         Returns:
-            SHA-256 hash of the stable prefix including tools if provided.
+            SHA-256 hash of the stable prefix.
         """
         import hashlib
         import json
 
-        stable_layers = [LayerType.SYSTEM, LayerType.CONTEXT, LayerType.SESSION]
+        stable_layers = [LayerType.SYSTEM, LayerType.CONTEXT]
         prefix_content: list[str] = []
-
-        # Include session_id in hash if set (for session isolation)
-        if self.session_id:
-            prefix_content.append(f"_session:{self.session_id}")
 
         for lt in stable_layers:
             for msg in sorted(self.layers[lt], key=lambda m: m.content_hash()):
@@ -147,12 +176,19 @@ class StratifiedPrompt(BaseModel):
                     if isinstance(msg.content, (dict, list))
                     else str(msg.content)
                 )
-                prefix_content.append(f"{msg.role}:{content_str}")
+                content_str = self._normalize_content(content_str)
 
-        # Include tool_hash if tools are provided
-        if tools:
-            tool_hash = ToolSerializer.compute_tool_hash(tools)
-            prefix_content.append(f"_tools:{tool_hash}")
+                # Truncate L0 to first N tokens to exclude per-project context
+                if max_l0_tokens is not None and lt == LayerType.SYSTEM:
+                    import tiktoken
+
+                    encoding = tiktoken.get_encoding("cl100k_base")
+                    tokens = encoding.encode(content_str)
+                    if len(tokens) > max_l0_tokens:
+                        truncated = encoding.decode(tokens[:max_l0_tokens])
+                        content_str = truncated
+
+                prefix_content.append(f"{msg.role}:{content_str}")
 
         combined = "|".join(prefix_content)
         return hashlib.sha256(combined.encode()).hexdigest()
@@ -198,7 +234,7 @@ class LayerCacheRequest(BaseModel):
 
     # Standard OpenAI fields
     model: str = Field(max_length=256)
-    messages: list[dict[str, Any]] = Field(max_length=512)
+    messages: list[dict[str, Any]]
     temperature: float | None = None
     top_p: float | None = None
     max_tokens: int | None = None
@@ -240,5 +276,6 @@ class CacheEntry(BaseModel):
     query_embedding: list[float] | None = None
     response_payload: dict[str, Any]
     model: str
+    tool_hash: str = ""
     ttl_expires_at: float
     created_at: float = 0.0

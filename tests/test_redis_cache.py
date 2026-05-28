@@ -185,24 +185,24 @@ class TestCacheFactory:
 
 
 class TestSessionIsolation:
-    """Test session isolation in cache keys."""
+    """Test that session_id is excluded from cache keys."""
 
-    def test_prefix_hash_includes_session_id(self):
-        """Test that session_id is included in prefix hash."""
+    def test_prefix_hash_excludes_session_id(self):
+        """Test that session_id is NOT included in prefix hash."""
         prompt_with_session = StratifiedPrompt(session_id="session-123")
         prompt_without_session = StratifiedPrompt(session_id=None)
 
         hash_with = prompt_with_session.prefix_hash()
         hash_without = prompt_without_session.prefix_hash()
 
-        assert hash_with != hash_without
+        assert hash_with == hash_without
 
-    def test_different_sessions_different_hashes(self):
-        """Test that different session IDs produce different hashes."""
+    def test_different_sessions_same_hash(self):
+        """Test that different session IDs produce same hash (L0+L1 only)."""
         prompt1 = StratifiedPrompt(session_id="session-1")
         prompt2 = StratifiedPrompt(session_id="session-2")
 
-        assert prompt1.prefix_hash() != prompt2.prefix_hash()
+        assert prompt1.prefix_hash() == prompt2.prefix_hash()
 
     def test_same_session_same_hash(self):
         """Test that same session ID produces same hash."""

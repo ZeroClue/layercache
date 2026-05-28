@@ -2,7 +2,7 @@
 proxy:
   host: 0.0.0.0
   port: 8000
-  log_level: info
+  log_level: debug
 providers:
   anthropic:
     api_key_env: ANTHROPIC_API_KEY
@@ -10,10 +10,19 @@ providers:
     api_key_env: OPENAI_API_KEY
   gemini:
     api_key_env: GOOGLE_API_KEY
+  opencode:
+    api_key_env: OPENCODE_ZEN_API_KEY
+    base_url: https://opencode.ai/zen/v1
   opencode-go:
     api_key_env: OPENCODE_ZEN_API_KEY
     base_url: https://opencode.ai/zen/v1
     default_model: opencode-go/qwen3.5-plus
+    model_aliases:
+      deepseek-v4-flash: deepseek-v4-flash-free
+      mimo-v2.5: mimo-v2.5-free
+      qwen3.6-plus: qwen3.6-plus-free
+      minimax-m2.5: minimax-m2.5-free
+      nemotron-3-super: nemotron-3-super-free
 caching:
   semantic:
     enabled: true

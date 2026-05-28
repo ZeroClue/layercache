@@ -438,9 +438,8 @@ async def main():
      default_ttl: 3600
      similarity_threshold: 0.95
      embedder: BAAI/bge-small-en-v1.5
-     session_isolation: true
-     session_id_header: X-Session-ID
-     session_id_auto_generate: true
+      session_id_header: X-Session-ID
+      session_id_auto_generate: false
 ```
 
 ### Redis Connection String Formats

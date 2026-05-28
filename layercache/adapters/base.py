@@ -56,7 +56,16 @@ class BaseAdapter(ABC):
         """Reassemble prompt messages and attach layer metadata for downstream use."""
         messages: list[dict[str, Any]] = []
         for layer_type in sorted(LayerType, key=lambda lt: lt.sort_order):
-            layer_msgs = sorted(prompt.layers[layer_type], key=lambda m: m.content_hash())
+            if layer_type in (LayerType.SYSTEM, LayerType.CONTEXT):
+                layer_msgs = sorted(
+                    prompt.layers[layer_type],
+                    key=lambda m: m.content_hash(),
+                )
+            else:
+                layer_msgs = sorted(
+                    prompt.layers[layer_type],
+                    key=lambda m: m.original_index,
+                )
             for msg in layer_msgs:
                 message_dict: dict[str, Any] = {
                     "role": msg.role,

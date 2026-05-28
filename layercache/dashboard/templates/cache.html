@@ -11,6 +11,18 @@
     <div class="stat-label">Valid Entries</div>
     <div class="stat-value">{{ cache_stats.valid_entries }}</div>
   </div>
+  <div class="stat-card" data-stat="cache-lookups">
+    <div class="stat-label">Cache Lookups</div>
+    <div class="stat-value">{{ cache_lookups }}</div>
+  </div>
+  <div class="stat-card" data-stat="buckets">
+    <div class="stat-label">Prefix Buckets</div>
+    <div class="stat-value">{{ bucket_count }}</div>
+  </div>
+  <div class="stat-card" data-stat="avg-turns">
+    <div class="stat-label">Avg Turns Per Bucket</div>
+    <div class="stat-value">{{ "%.1f"|format(avg_turns) }}</div>
+  </div>
 </div>
 {% endblock %}
 {% block body_class %}dashboard-page{% endblock %}

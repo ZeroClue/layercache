@@ -35,6 +35,7 @@ class MetricsCollector:
     - Token usage (input, output, cached)
     - Latency (request duration)
     - Semantic cache hits/misses
+    - Prefix hash bucket diversity (measures cache key reuse)
     """
 
     def __init__(self) -> None:
@@ -42,6 +43,7 @@ class MetricsCollector:
         self._llm_requests_total: int = 0
         self._semantic_cache_hits_total: int = 0
         self._semantic_cache_misses_total: int = 0
+        self._cache_lookups_total: int = 0
 
         # Token accumulators
         self._total_input_tokens: int = 0
@@ -55,6 +57,9 @@ class MetricsCollector:
         self._model_input_tokens: dict[str, int] = {}
         self._model_output_tokens: dict[str, int] = {}
         self._model_cache_read_tokens: dict[str, int] = {}
+
+        # Prefix hash bucket tracking (model -> prefix_hash -> request_count)
+        self._prefix_hash_buckets: dict[str, dict[str, int]] = {}
 
         # Latency tracking
         self._request_latencies: list[float] = []
@@ -138,12 +143,32 @@ class MetricsCollector:
         with self._lock:
             self._semantic_cache_misses_total += 1
 
+    def record_cache_lookup(
+        self,
+        prefix_hash: str,
+        model: str = "",
+        hit: bool = False,
+    ) -> None:
+        """Track a cache lookup by prefix hash bucket for diversity metrics.
+
+        Records which prefix hash bucket was accessed and whether it hit,
+        enabling measurement of cache key reuse across requests.
+        """
+        if not prefix_hash:
+            return
+        short_hash = prefix_hash[:12]
+        with self._lock:
+            self._cache_lookups_total += 1
+            model_buckets = self._prefix_hash_buckets.setdefault(model, {})
+            model_buckets[short_hash] = model_buckets.get(short_hash, 0) + 1
+
     def get_metrics(self) -> dict[str, Any]:
         """Get aggregated metrics for the dashboard API."""
         with self._lock:
             total_requests = self._llm_requests_total
             hits = self._semantic_cache_hits_total
             misses = self._semantic_cache_misses_total
+            lookups = self._cache_lookups_total
             total_input = self._total_input_tokens
             total_output = self._total_output_tokens
             total_cache_read = self._total_cache_read_tokens
@@ -155,6 +180,7 @@ class MetricsCollector:
             model_requests = dict(self._model_requests)
             model_inputs = dict(self._model_input_tokens)
             model_cached = dict(self._model_cache_read_tokens)
+            prefix_buckets = {m: dict(b) for m, b in self._prefix_hash_buckets.items()}
 
         semantic_total = hits + misses
 
@@ -163,8 +189,14 @@ class MetricsCollector:
         semantic_hit_rate = hits / semantic_total if semantic_total > 0 else 0.0
 
         avg_latency = sum(latencies) / len(latencies) if latencies else 0.0
-
         p95_latency = self._percentile(latencies, 95) if latencies else 0.0
+
+        # Prefix hash bucket diversity
+        total_buckets = sum(len(b) for b in prefix_buckets.values())
+        avg_turns_per_bucket: float = 0.0
+        if total_buckets > 0:
+            total_bucket_requests = sum(c for b in prefix_buckets.values() for c in b.values())
+            avg_turns_per_bucket = round(total_bucket_requests / total_buckets, 2)
 
         by_model: dict[str, dict[str, float]] = {}
         for model in model_requests:
@@ -183,8 +215,11 @@ class MetricsCollector:
             "llm_requests_total": total_requests,
             "semantic_cache_hits_total": hits,
             "semantic_cache_misses_total": misses,
-            "provider_token_cache_hit_rate": round(provider_hit_rate, 4),
+            "cache_lookups_total": lookups,
             "semantic_cache_hit_rate": round(semantic_hit_rate, 4),
+            "prefix_hash_bucket_count": total_buckets,
+            "avg_turns_per_bucket": avg_turns_per_bucket,
+            "provider_token_cache_hit_rate": round(provider_hit_rate, 4),
             "total_input_tokens": total_input,
             "total_output_tokens": total_output,
             "total_cache_read_tokens": total_cache_read,
