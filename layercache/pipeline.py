@@ -1027,45 +1027,45 @@ class RequestPipeline:
             },
         }
 
-        def _resolve_model(self, model: str, provider: str) -> str:
-            """Resolve model name through provider aliases or upstream model list."""
-            if not self._providers_config:
-                return model
-            cfg = self._providers_config.root.get(provider)
-            if not cfg:
-                return model
-            # First check explicit aliases
-            if cfg.model_aliases:
-                resolved = cfg.model_aliases.get(model)
-                if resolved:
-                    logger.debug("Model alias: %s -> %s (provider=%s)", model, resolved, provider)
-                    return resolved
-            # Strip provider-specific suffixes (e.g. :cloud for Ollama Cloud)
-            resolved = model
-            if model.endswith(":cloud") and provider == "ollama-cloud":
-                resolved = model[: -len(":cloud")]
-                logger.debug(
-                    "Stripped :cloud suffix: %s -> %s (provider=%s)",
-                    model,
-                    resolved,
-                    provider,
-                )
-            # Auto-resolve: if upstream has a model whose name starts with <model>-,
-            # use that (catches deepseek-v4-flash -> deepseek-v4-flash-free etc.)
-            if cfg.base_url and self._upstream_models.get(provider):
-                upstream_ids = self._upstream_models[provider]
-                if resolved not in upstream_ids:
-                    prefix = f"{resolved}-"
-                    matches = [m for m in upstream_ids if m.startswith(prefix)]
-                    if len(matches) == 1:
-                        logger.info(
-                            "Auto-resolved model %s -> %s (provider=%s)",
-                            resolved,
-                            matches[0],
-                            provider,
-                        )
-                        return matches[0]
-            return resolved
+    def _resolve_model(self, model: str, provider: str) -> str:
+        """Resolve model name through provider aliases or upstream model list."""
+        if not self._providers_config:
+            return model
+        cfg = self._providers_config.root.get(provider)
+        if not cfg:
+            return model
+        # First check explicit aliases
+        if cfg.model_aliases:
+            resolved = cfg.model_aliases.get(model)
+            if resolved:
+                logger.debug("Model alias: %s -> %s (provider=%s)", model, resolved, provider)
+                return resolved
+        # Strip provider-specific suffixes (e.g. :cloud for Ollama Cloud)
+        resolved = model
+        if model.endswith(":cloud") and provider == "ollama-cloud":
+            resolved = model[: -len(":cloud")]
+            logger.debug(
+                "Stripped :cloud suffix: %s -> %s (provider=%s)",
+                model,
+                resolved,
+                provider,
+            )
+        # Auto-resolve: if upstream has a model whose name starts with <model>-,
+        # use that (catches deepseek-v4-flash -> deepseek-v4-flash-free etc.)
+        if cfg.base_url and self._upstream_models.get(provider):
+            upstream_ids = self._upstream_models[provider]
+            if resolved not in upstream_ids:
+                prefix = f"{resolved}-"
+                matches = [m for m in upstream_ids if m.startswith(prefix)]
+                if len(matches) == 1:
+                    logger.info(
+                        "Auto-resolved model %s -> %s (provider=%s)",
+                        resolved,
+                        matches[0],
+                        provider,
+                    )
+                    return matches[0]
+        return resolved
 
     async def _stream_llm(
         self,
