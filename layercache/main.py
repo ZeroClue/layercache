@@ -22,6 +22,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+import httpx
 import litellm
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -656,7 +657,16 @@ async def anthropic_messages(
             "In protected mode, configure the provider API key environment variable.",
         )
 
-    # Translate Anthropic request to pipeline format
+    # Detect provider and route accordingly
+    provider_name = detect_provider(model, _settings.providers if _settings else None)
+
+    # For Anthropic models, call the API directly — no translation needed
+    if provider_name == "anthropic":
+        if body.get("stream", False):
+            return await _stream_anthropic_direct(body, api_key)
+        return await _call_anthropic_direct(body, api_key)
+
+    # Translate Anthropic request to pipeline format (for non-Anthropic providers)
     try:
         fields = anthropic_request_to_fields(body)
     except Exception as e:
@@ -809,6 +819,84 @@ def _list_configured_providers() -> list[dict[str, Any]]:
         key_set = bool(os.environ.get(cfg.api_key_env)) if cfg.api_key_env else False
         configured.append({"name": name, "api_key_env": cfg.api_key_env or "", "key_set": key_set})
     return configured
+
+
+# --- Direct Anthropic API call ---
+
+
+def _anthropic_headers(api_key: str) -> dict[str, str]:
+    """Build Anthropic auth headers using LiteLLM's OAuth handling."""
+    from litellm.llms.anthropic.common_utils import optionally_handle_anthropic_oauth
+
+    headers: dict[str, str] = {
+        "Content-Type": "application/json",
+        "anthropic-version": "2023-06-01",
+    }
+    if api_key.startswith("sk-ant-api"):
+        headers["x-api-key"] = api_key
+    else:
+        headers, api_key = optionally_handle_anthropic_oauth(headers, api_key)
+        if "authorization" not in headers and "x-api-key" not in headers:
+            headers["x-api-key"] = api_key
+    return headers
+
+
+async def _call_anthropic_direct(body: dict[str, Any], api_key: str) -> JSONResponse:
+    """Call the Anthropic Messages API directly, bypassing all translation."""
+    base_url = "https://api.anthropic.com/v1"
+    if _settings:
+        cfg = _settings.providers.root.get("anthropic")
+        if cfg and cfg.base_url:
+            base_url = cfg.base_url
+    api_url = f"{base_url.rstrip('/')}/messages"
+
+    headers = _anthropic_headers(api_key)
+    timeout_val = _settings.providers.root.get("anthropic", None).timeout if _settings else 120
+
+    async with httpx.AsyncClient(timeout=timeout_val or 120) as client:
+        resp = await client.post(api_url, json=body, headers=headers)
+        if resp.status_code != 200:
+            logger.error("Anthropic API error (HTTP %d): %s", resp.status_code, resp.text[:500])
+            resp.raise_for_status()
+        return JSONResponse(content=resp.json(), status_code=resp.status_code)
+
+
+async def _stream_anthropic_direct(body: dict[str, Any], api_key: str) -> StreamingResponse:
+    """Stream from the Anthropic Messages API directly."""
+    base_url = "https://api.anthropic.com/v1"
+    if _settings:
+        cfg = _settings.providers.root.get("anthropic")
+        if cfg and cfg.base_url:
+            base_url = cfg.base_url
+    api_url = f"{base_url.rstrip('/')}/messages"
+
+    headers = _anthropic_headers(api_key)
+    body_with_stream = dict(body)
+    body_with_stream["stream"] = True
+    timeout_val = _settings.providers.root.get("anthropic", None).timeout if _settings else 120
+
+    async def _stream():
+        async with httpx.AsyncClient(timeout=timeout_val or 120) as client:
+            async with client.stream(
+                "POST", api_url, json=body_with_stream, headers=headers
+            ) as resp:
+                if resp.status_code != 200:
+                    error_text = await resp.aread()
+                    logger.error(
+                        "Anthropic API error (HTTP %d): %s",
+                        resp.status_code,
+                        error_text[:500].decode(),
+                    )
+                    resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if line:
+                        yield f"{line}\n"
+
+    return StreamingResponse(
+        _stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
 
 
 # --- Cache Metrics Endpoints ---
