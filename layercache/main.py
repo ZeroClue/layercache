@@ -856,8 +856,9 @@ async def _call_anthropic_direct(body: dict[str, Any], api_key: str) -> JSONResp
     async with httpx.AsyncClient(timeout=timeout_val or 120) as client:
         resp = await client.post(api_url, json=body, headers=headers)
         if resp.status_code != 200:
-            logger.error("Anthropic API error (HTTP %d): %s", resp.status_code, resp.text[:500])
-            resp.raise_for_status()
+            detail = resp.text[:1000]
+            logger.error("Anthropic API error (HTTP %d): %s", resp.status_code, detail)
+            raise HTTPException(status_code=resp.status_code, detail=detail)
         return JSONResponse(content=resp.json(), status_code=resp.status_code)
 
 
