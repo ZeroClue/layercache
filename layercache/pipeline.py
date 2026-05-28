@@ -53,6 +53,27 @@ def _anthropic_stop_reason(reason: str) -> str:
     return _ANTHROPIC_STOP_REASON_MAP.get(reason, reason)
 
 
+def _anthropic_auth_headers(api_key: str) -> dict[str, str]:
+    """Build auth headers for Anthropic API.
+
+    Uses LiteLLM's own OAuth handling for Pro/Max tokens (sk-ant-oat-*).
+    For regular API keys (sk-ant-api* or others), uses x-api-key.
+    """
+    from litellm.llms.anthropic.common_utils import optionally_handle_anthropic_oauth
+
+    headers: dict[str, str] = {
+        "Content-Type": "application/json",
+        "anthropic-version": "2023-06-01",
+    }
+    if api_key.startswith("sk-ant-api"):
+        headers["x-api-key"] = api_key
+    else:
+        headers, api_key = optionally_handle_anthropic_oauth(headers, api_key)
+        if "authorization" not in headers and "x-api-key" not in headers:
+            headers["x-api-key"] = api_key
+    return headers
+
+
 def validate_model_name(model: str) -> None:
     """Reject model names that look like URLs, IPs, or paths (SSRF guard).
 
@@ -963,11 +984,7 @@ class RequestPipeline:
         )
         api_url = f"{base_url.rstrip('/')}/messages"
 
-        headers = {
-            "Content-Type": "application/json",
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-        }
+        headers = _anthropic_auth_headers(api_key)
 
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             response = await client.post(api_url, json=anthropic_body, headers=headers)
@@ -1220,11 +1237,7 @@ class RequestPipeline:
         )
         api_url = f"{base_url.rstrip('/')}/messages"
 
-        headers = {
-            "Content-Type": "application/json",
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-        }
+        headers = _anthropic_auth_headers(api_key)
 
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             async with client.stream("POST", api_url, json=anthropic_body, headers=headers) as resp:
