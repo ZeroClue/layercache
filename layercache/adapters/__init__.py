@@ -84,6 +84,11 @@ def detect_provider(
         if model_lower.startswith(known_prefix):
             return provider
 
+    # Check for Ollama Cloud models (suffixed with :cloud)
+    if model_lower.endswith(":cloud") and providers_config:
+        if "ollama-cloud" in providers_config.root:
+            return "ollama-cloud"
+
     # Fallback: model has no provider prefix and no known pattern matched.
     # If "openai" is not explicitly configured with a base_url, check
     # other configured providers. This handles AI SDK providers that

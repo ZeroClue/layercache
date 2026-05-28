@@ -20,6 +20,11 @@ providers:
     default_model: opencode-go/qwen3.5-plus
     # Go model IDs match client names exactly — no aliases needed
     # (deepseek-v4-flash on Go is the same name the client sends)
+  ollama-cloud:
+    api_key_env: OLLAMA_API_KEY
+    base_url: https://ollama.com
+    # Model names from Claude Code have a :cloud suffix (e.g. deepseek-v4-pro:cloud)
+    # LayerCache strips the suffix and routes to Ollama Cloud's OpenAI-compatible API
 caching:
   semantic:
     enabled: true

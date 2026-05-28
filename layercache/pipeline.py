@@ -39,7 +39,7 @@ from .truncation import TokenCounter, TruncationStrategy, Truncator
 logger = logging.getLogger(__name__)
 
 # Model names must match known provider prefixes to block SSRF via LiteLLM
-_ALLOWED_MODEL_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_.-]*(/[a-zA-Z][a-zA-Z0-9_.-]+)?$")
+_ALLOWED_MODEL_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_.:-]*(/[a-zA-Z][a-zA-Z0-9_.:-]+)?$")
 
 
 def validate_model_name(model: str) -> None:
@@ -823,22 +823,32 @@ class RequestPipeline:
             if resolved:
                 logger.debug("Model alias: %s -> %s (provider=%s)", model, resolved, provider)
                 return resolved
+        # Strip provider-specific suffixes (e.g. :cloud for Ollama Cloud)
+        resolved = model
+        if model.endswith(":cloud") and provider == "ollama-cloud":
+            resolved = model[: -len(":cloud")]
+            logger.debug(
+                "Stripped :cloud suffix: %s -> %s (provider=%s)",
+                model,
+                resolved,
+                provider,
+            )
         # Auto-resolve: if upstream has a model whose name starts with <model>-,
         # use that (catches deepseek-v4-flash -> deepseek-v4-flash-free etc.)
         if cfg.base_url and self._upstream_models.get(provider):
             upstream_ids = self._upstream_models[provider]
-            if model not in upstream_ids:
-                prefix = f"{model}-"
+            if resolved not in upstream_ids:
+                prefix = f"{resolved}-"
                 matches = [m for m in upstream_ids if m.startswith(prefix)]
                 if len(matches) == 1:
                     logger.info(
                         "Auto-resolved model %s -> %s (provider=%s)",
-                        model,
+                        resolved,
                         matches[0],
                         provider,
                     )
                     return matches[0]
-        return model
+        return resolved
 
     async def _stream_llm(
         self,
