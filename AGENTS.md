@@ -29,11 +29,12 @@ Config in `pyproject.toml`: line-length 100, mypy strict, ruff selects `E,F,I,N,
 
 - FastAPI async proxy, entrypoint `layercache/main.py:app`
 - 11-stage `RequestPipeline` (semantic cache lookup → stratify L0-L4 → canonicalize → **truncate session** → **prefix threshold check** → enhance at L3 → inject provider markers → LiteLLM route → handle response → store in cache → background cache creation)
+- Claude Code Pro / Ollama Cloud traffic through `/v1/messages` uses **direct httpx proxy** to the upstream (Anthropic or Ollama API), bypassing the pipeline and LiteLLM entirely. No message translation needed.
 - Provider adapters in `layercache/adapters/`: Anthropic (explicit `cache_control`), OpenAI (automatic prefix caching), Gemini (`CachedContent` API). Detected from model name prefixes (anthropic/claude, gpt, gemini). Can be overridden per provider via `providers.{name}.adapter` in config.
 - `detect_provider()` and `get_adapter()` accept optional `ProvidersConfig` for config-aware resolution. Pipeline wires `self._providers_config` through both streaming and non-streaming paths.
 - Enhancement plugins in `layercache/enhancements/` inject only at L3; they never modify L0-L2 (prefix hash invariant)
 - Semantic cache: SQLite via aiosqlite + FastEmbed (`BAAI/bge-small-en-v1.5`, 384d) in ProcessPoolExecutor
-- Metrics: Prometheus + JSON dashboard at `/metrics` and `/v1/cache/metrics`
+- Metrics: Prometheus + JSON dashboard at `/metrics` and `/v1/cache/metrics`. Dashboard reads from persistent DB rollups, not in-memory counters.
 
 ## Package structure
 

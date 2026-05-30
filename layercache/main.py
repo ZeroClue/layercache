@@ -663,10 +663,23 @@ async def anthropic_messages(
     # For Anthropic models, call the API directly — no translation needed
     if provider_name == "anthropic":
         if body.get("stream", False):
-            return await _stream_anthropic_direct(body, api_key)
-        return await _call_anthropic_direct(body, api_key)
+            return await _stream_anthropic_direct(body, api_key, request.headers)
+        return await _call_anthropic_direct(body, api_key, request.headers)
 
-    # Translate Anthropic request to pipeline format (for non-Anthropic providers)
+    # For Ollama Cloud via Claude Code: call directly in Anthropic format,
+    # no translation needed (Ollama supports /v1/messages natively)
+    if provider_name == "ollama-cloud" and _settings:
+        cfg = _settings.providers.root.get("ollama-cloud")
+        if cfg and cfg.base_url:
+            if body.get("stream", False):
+                return await _stream_anthropic_direct(
+                    body, api_key, request.headers, provider="ollama-cloud"
+                )
+            return await _call_anthropic_direct(
+                body, api_key, request.headers, provider="ollama-cloud"
+            )
+
+    # For other providers (opencode, opencode-go): translate and go through pipeline
     try:
         fields = anthropic_request_to_fields(body)
     except Exception as e:
@@ -824,34 +837,67 @@ def _list_configured_providers() -> list[dict[str, Any]]:
 # --- Direct Anthropic API call ---
 
 
-def _anthropic_headers(api_key: str) -> dict[str, str]:
-    """Build Anthropic auth headers using LiteLLM's OAuth handling."""
+def _anthropic_headers(
+    api_key: str, original_headers: dict | None = None, provider: str = "anthropic"
+) -> dict[str, str]:
+    """Build auth headers for an Anthropic-compatible API.
+
+    Args:
+        api_key: The API key or OAuth token.
+        original_headers: Optional original request headers to forward
+            (e.g. anthropic-beta for context management).
+        provider: Provider name (anthropic or ollama-cloud).
+    """
     from litellm.llms.anthropic.common_utils import optionally_handle_anthropic_oauth
 
     headers: dict[str, str] = {
         "Content-Type": "application/json",
         "anthropic-version": "2023-06-01",
     }
-    if api_key.startswith("sk-ant-api"):
-        headers["x-api-key"] = api_key
-    else:
-        headers, api_key = optionally_handle_anthropic_oauth(headers, api_key)
-        if "authorization" not in headers and "x-api-key" not in headers:
+    if original_headers:
+        for key, value in original_headers.items():
+            if key.lower().startswith("anthropic-") and key.lower() not in ("anthropic-version",):
+                headers[key] = value
+
+    if provider == "anthropic":
+        if api_key.startswith("sk-ant-api"):
             headers["x-api-key"] = api_key
+        else:
+            headers, api_key = optionally_handle_anthropic_oauth(headers, api_key)
+            if "authorization" not in headers and "x-api-key" not in headers:
+                headers["x-api-key"] = api_key
+    else:
+        headers["Authorization"] = f"Bearer {api_key}"
+        headers.pop("anthropic-version", None)
+
     return headers
 
 
-async def _call_anthropic_direct(body: dict[str, Any], api_key: str) -> JSONResponse:
-    """Call the Anthropic Messages API directly, bypassing all translation."""
+async def _call_anthropic_direct(
+    body: dict[str, Any],
+    api_key: str,
+    original_headers: dict | None = None,
+    provider: str = "anthropic",
+) -> JSONResponse:
+    """Call the Anthropic Messages API directly, bypassing all translation.
+
+    Args:
+        body: The Anthropic-format request body.
+        api_key: The API key or OAuth token.
+        original_headers: Original request headers to forward.
+        provider: Provider name for base_url lookup (anthropic, ollama-cloud).
+    """
     base_url = "https://api.anthropic.com/v1"
+    if provider != "anthropic":
+        base_url = "https://ollama.com"
     if _settings:
-        cfg = _settings.providers.root.get("anthropic")
+        cfg = _settings.providers.root.get(provider)
         if cfg and cfg.base_url:
             base_url = cfg.base_url
     api_url = f"{base_url.rstrip('/')}/messages"
 
-    headers = _anthropic_headers(api_key)
-    timeout_val = _settings.providers.root.get("anthropic", None).timeout if _settings else 120
+    headers = _anthropic_headers(api_key, original_headers, provider)
+    timeout_val = _settings.providers.root.get(provider, None).timeout if _settings else 120
 
     async with httpx.AsyncClient(timeout=timeout_val or 120) as client:
         resp = await client.post(api_url, json=body, headers=headers)
@@ -862,19 +908,26 @@ async def _call_anthropic_direct(body: dict[str, Any], api_key: str) -> JSONResp
         return JSONResponse(content=resp.json(), status_code=resp.status_code)
 
 
-async def _stream_anthropic_direct(body: dict[str, Any], api_key: str) -> StreamingResponse:
-    """Stream from the Anthropic Messages API directly."""
+async def _stream_anthropic_direct(
+    body: dict[str, Any],
+    api_key: str,
+    original_headers: dict | None = None,
+    provider: str = "anthropic",
+) -> StreamingResponse:
+    """Stream from an Anthropic-compatible Messages API directly."""
     base_url = "https://api.anthropic.com/v1"
+    if provider != "anthropic":
+        base_url = "https://ollama.com"
     if _settings:
-        cfg = _settings.providers.root.get("anthropic")
+        cfg = _settings.providers.root.get(provider)
         if cfg and cfg.base_url:
             base_url = cfg.base_url
     api_url = f"{base_url.rstrip('/')}/messages"
 
-    headers = _anthropic_headers(api_key)
+    headers = _anthropic_headers(api_key, original_headers, provider)
     body_with_stream = dict(body)
     body_with_stream["stream"] = True
-    timeout_val = _settings.providers.root.get("anthropic", None).timeout if _settings else 120
+    timeout_val = _settings.providers.root.get(provider, None).timeout if _settings else 120
 
     async def _stream():
         async with httpx.AsyncClient(timeout=timeout_val or 120) as client:
@@ -900,7 +953,91 @@ async def _stream_anthropic_direct(body: dict[str, Any], api_key: str) -> Stream
     )
 
 
-# --- Cache Metrics Endpoints ---
+# --- Direct provider call (OpenAI-compatible, e.g. Ollama Cloud) ---
+
+
+async def _call_provider_direct(
+    fields: dict[str, Any],
+    api_key: str,
+    base_url: str,
+) -> JSONResponse:
+    """Call an OpenAI-compatible provider directly, bypassing LiteLLM."""
+    api_url = f"{base_url.rstrip('/')}/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
+    body: dict[str, Any] = {
+        "model": fields["model"],
+        "messages": fields["messages"],
+        "max_tokens": fields.get("max_tokens", 4096),
+    }
+    if fields.get("temperature") is not None:
+        body["temperature"] = fields["temperature"]
+    if fields.get("top_p") is not None:
+        body["top_p"] = fields["top_p"]
+    if fields.get("tools"):
+        body["tools"] = fields["tools"]
+    if fields.get("tool_choice") is not None:
+        body["tool_choice"] = fields["tool_choice"]
+    if fields.get("stop"):
+        body["stop"] = fields["stop"]
+
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(api_url, json=body, headers=headers)
+        if resp.status_code != 200:
+            detail = resp.text[:1000]
+            logger.error("Provider API error (HTTP %d): %s", resp.status_code, detail)
+            raise HTTPException(status_code=resp.status_code, detail=detail)
+        return JSONResponse(content=resp.json(), status_code=resp.status_code)
+
+
+async def _call_provider_direct_stream(
+    fields: dict[str, Any],
+    api_key: str,
+    base_url: str,
+) -> StreamingResponse:
+    """Stream from an OpenAI-compatible provider directly, bypassing LiteLLM."""
+    api_url = f"{base_url.rstrip('/')}/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
+    body: dict[str, Any] = {
+        "model": fields["model"],
+        "messages": fields["messages"],
+        "max_tokens": fields.get("max_tokens", 4096),
+        "stream": True,
+    }
+    if fields.get("temperature") is not None:
+        body["temperature"] = fields["temperature"]
+    if fields.get("top_p") is not None:
+        body["top_p"] = fields["top_p"]
+    if fields.get("tools"):
+        body["tools"] = fields["tools"]
+    if fields.get("tool_choice") is not None:
+        body["tool_choice"] = fields["tool_choice"]
+
+    async def _stream():
+        async with httpx.AsyncClient(timeout=120) as client:
+            async with client.stream("POST", api_url, json=body, headers=headers) as resp:
+                if resp.status_code != 200:
+                    error_text = await resp.aread()
+                    logger.error(
+                        "Provider API error (HTTP %d): %s",
+                        resp.status_code,
+                        error_text[:500].decode(),
+                    )
+                    resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if line:
+                        yield f"{line}\n"
+
+    return StreamingResponse(
+        _stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
 
 
 @app.get("/v1/cache/metrics")

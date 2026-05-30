@@ -894,7 +894,7 @@ class RequestPipeline:
                 return resolved
         # Strip provider-specific suffixes (e.g. :cloud for Ollama Cloud)
         resolved = model
-        if model.endswith(":cloud") and provider == "ollama-cloud":
+        if model.endswith(":cloud"):
             resolved = model[: -len(":cloud")]
             logger.debug(
                 "Stripped :cloud suffix: %s -> %s (provider=%s)",
@@ -902,6 +902,14 @@ class RequestPipeline:
                 resolved,
                 provider,
             )
+        # Check explicit aliases
+        if cfg.model_aliases:
+            resolved_by_alias = cfg.model_aliases.get(resolved)
+            if resolved_by_alias:
+                logger.debug(
+                    "Model alias: %s -> %s (provider=%s)", resolved, resolved_by_alias, provider
+                )
+                return resolved_by_alias
         # Auto-resolve: if upstream has a model whose name starts with <model>-,
         # use that (catches deepseek-v4-flash -> deepseek-v4-flash-free etc.)
         if cfg.base_url and self._upstream_models.get(provider):

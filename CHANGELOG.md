@@ -1,18 +1,140 @@
-# v1.7.0 Release Notes
+# v1.8.0 Release Notes
 
-**Version:** 1.7.0  
-**Release Date:** May 28, 2026  
+**Version:** 1.8.0  
+**Release Date:** May 30, 2026  
 **Status:** ✅ **READY FOR RELEASE**
 
 ---
 
 ## What's New
 
-LayerCache v1.7.0 introduces cross-conversation semantic response caching, model name auto-resolution, and critical message pipeline fixes for production reliability with tool-calling LLMs.
+LayerCache v1.8.0 brings Claude Code support, direct Anthropic/Ollama Cloud proxying, provider detection improvements, and dashboard reliability fixes.
 
 ---
 
 ## Major Features
+
+### 1. Claude Code Pro & Ollama Cloud Support 🎯
+
+LayerCache now supports Claude Code (Anthropic CLI) as a first-class client through the `/v1/messages` endpoint. Two providers:
+
+- **Claude Code Pro** — routes to `api.anthropic.com/v1` with full tool call support, OAuth authentication, and context management headers. No message translation needed — the original Anthropic-format body is proxied directly.
+- **Ollama Cloud via Claude Code** — routes to `api.ollama.com/v1` using Ollama's native Anthropic-compatible `/v1/messages` endpoint. Same direct proxy approach with `Authorization: Bearer` auth.
+
+Both use a direct httpx-based proxy that bypasses LiteLLM entirely, avoiding the double-translation (Anthropic→OpenAI→Anthropic) that previously corrupted tool sequences.
+
+### 2. Direct API Proxy Architecture 🔄
+
+New `_call_anthropic_direct()` and `_stream_anthropic_direct()` functions in `main.py` handle `/v1/messages` traffic for supported providers:
+- Anthropic Pro (`sk-ant-api*` or OAuth `sk-ant-oat*` tokens)
+- Ollama Cloud (`:cloud` suffixed model names via `Authorization: Bearer`)
+
+The `/v1/messages` endpoint now detects the provider from the model name and routes accordingly:
+- `anthropic` provider → direct proxy to Anthropic API
+- `ollama-cloud` provider → direct proxy to Ollama API (with `:cloud` suffix stripped)
+- `opencode`/`opencode-go` → existing translation + pipeline path
+
+### 3. Provider Detection Improvements 🔍
+
+`detect_provider()` now prefers providers with `default_model` set when falling back through configured providers with `base_url`. This fixes the ambiguity between `opencode` (Zen API) and `opencode-go` (Go API) when the AI SDK strips the provider prefix from model names.
+
+Also adds `:cloud` suffix detection to route Ollama Cloud models automatically.
+
+### 4. Auth Header Handling 🔐
+
+Uses LiteLLM's `optionally_handle_anthropic_oauth()` for Pro/Max subscription tokens, and forwards `anthropic-*` headers (including `anthropic-beta` for context management) from the original request to the upstream.
+
+---
+
+## Bug Fixes
+
+### Tool Call Preservation in Anthropic Translation
+
+`_translate_content_blocks()` in `anthropic_messages.py` was silently dropping `tool_use` content blocks when translating Anthropic `/v1/messages` requests to OpenAI format. Fixed by extracting tool_use blocks and converting them to OpenAI `tool_calls` format.
+
+### Message Sanitization for Anthropic Protocol
+
+Added `_sanitize_messages_for_anthropic()` in the pipeline to fix orphaned tool results and empty text content before LiteLLM's OpenAI→Anthropic translation. Based on the upstream fix from LiteLLM issue #19061.
+
+### Dashboard Persistence
+
+Rewired dashboard stat cards from volatile in-memory `MetricsCollector` counters to persistent `MetricsAggregator` DB rollups. Cards now survive container restarts and show accurate cumulative data.
+
+### Timer Duration Fix
+
+`RequestTimer.__exit__()` was never called — `timer.duration` remained `0.0` for all requests. Fixed by computing `timer.duration = time.time() - timer.start_time` inline before recording metrics. Latency now tracked correctly for new requests.
+
+### Context Management Beta Header
+
+Claude Code sends `context_management` in the request body with `anthropic-beta: context-management-2025-06-27` header. The direct proxy now forwards all `anthropic-*` headers from the original request.
+
+### Model Validation Regex
+
+Added `:` to allowed characters in `_ALLOWED_MODEL_RE` to support Ollama Cloud's `:cloud` model suffix convention.
+
+---
+
+## Documentation
+
+- `README.md` — Updated badges (v1.8.0, 243 passing tests), added Claude Code Pro/Ollama Cloud provider documentation, updated model aliases section
+- `layercache.yaml` — Added `ollama-cloud` provider configuration
+- `CHANGELOG.md` — This file
+
+---
+
+## Full Changelog
+
+### v1.8.0 (2026-05-30)
+
+**Added:**
+- Claude Code Pro support via direct `/v1/messages` proxy to Anthropic API — `layercache/main.py`
+- Ollama Cloud support via direct `/v1/messages` proxy to Ollama's Anthropic-compatible API — `layercache/main.py`
+- `_call_anthropic_direct()` and `_stream_anthropic_direct()` for direct httpx-based API calls
+- OAuth token handling via LiteLLM's `optionally_handle_anthropic_oauth()` — `layercache/main.py`
+- `anthropic-*` header forwarding (beta headers, context management) — `layercache/main.py`
+- `:cloud` suffix detection in `detect_provider()` — `layercache/adapters/__init__.py`
+- `default_model` preference in provider fallback — `layercache/adapters/__init__.py`
+- Message sanitization for Anthropic protocol (orphaned tool results, empty content) — `layercache/pipeline.py`
+- `ollama-cloud` provider config with `api_key_env: OLLAMA_API_KEY`, `base_url: https://ollama.com/v1` — `layercache.yaml`
+
+**Changed:**
+- Dashboard overview and cache pages now read from persistent `MetricsAggregator` DB rollups instead of volatile in-memory counters — `layercache/dashboard/router.py`
+- `_translate_content_blocks()` now preserves `tool_use` blocks as OpenAI `tool_calls` — `layercache/adapters/anthropic_messages.py`
+- `_build_payload()` applies Anthropic message sanitization before LiteLLM — `layercache/pipeline.py`
+- `_ALLOWED_MODEL_RE` regex allows `:` character — `layercache/pipeline.py`
+
+**Fixed:**
+- `tool_call_id` errors in Claude Code Pro by preserving `tool_use` blocks during translation
+- Orphaned `tool_result` messages causing 400 errors from Anthropic API
+- `timer.duration` always `0.0` (RequestTimer.__exit__ never called) — `layercache/pipeline.py`
+- Dashboard stat cards resetting to 0 on container restart
+- Empty content blocks causing Anthropic protocol violations
+- `detect_provider()` returning wrong provider for model names matching multiple configured providers
+- Timer fix: `timer.duration` computed before recording metrics
+
+**Removed:**
+- Auto-discovery model resolution (was mapping `deepseek-v4-flash` to `deepseek-v4-flash-free` incorrectly across providers)
+
+---
+
+## Contributors
+
+- LayerCache Team
+
+---
+
+**Download:**
+- PyPI: `pip install layercache==1.8.0`
+- Docker: `ghcr.io/zeroclue/layercache:1.8.0`
+- GitHub: https://github.com/zeroclue/layercache/releases/tag/v1.8.0
+
+---
+
+# v1.7.0 Release Notes
+
+**Version:** 1.7.0  
+**Release Date:** May 28, 2026  
+**Status:** ✅ **READY FOR RELEASE**
 
 ### 1. Cross-Conversation Cache Key Redesign 🔑
 

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.7.0-blue" alt="Version 1.7.0">
+  <img src="https://img.shields.io/badge/version-1.8.0-blue" alt="Version 1.8.0">
   <img src="https://img.shields.io/badge/python-3.11+-green" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/tests-243%20passing-brightgreen" alt="243 Tests Passing">
   <img src="https://img.shields.io/github/actions/workflow/status/ZeroClue/layercache/ci.yml?branch=main" alt="CI">
@@ -391,6 +391,35 @@ providers:
 ```
 
 Auto-discovery requires `api_key_env` to be set so the model list endpoint can be authenticated. If both an explicit alias and an auto-discovered match exist, the explicit alias takes precedence.
+
+### Claude Code Setup
+
+LayerCache supports Claude Code (Anthropic CLI v2.1.145+) through the `/v1/messages` endpoint for both Claude Pro subscriptions and Ollama Cloud.
+
+**Claude Pro via Anthropic API:**
+
+Set `ANTHROPIC_BASE_URL=http://127.0.0.1:8000` and Claude Code routes all requests through LayerCache:
+- No message translation needed — native Anthropic format
+- Supports OAuth tokens (Claude Pro/Max subscriptions) and API keys
+- Forwards context management headers automatically
+- Tool calls work correctly (no double-translation)
+
+**Ollama Cloud via Claude Code:**
+
+```bash
+export ANTHROPIC_API_KEY=your-ollama-cloud-api-key
+```
+
+Add the provider to `layercache.yaml`:
+
+```yaml
+providers:
+  ollama-cloud:
+    api_key_env: OLLAMA_API_KEY
+    base_url: https://ollama.com/v1
+```
+
+Model names with the `:cloud` suffix (e.g. `deepseek-v4-flash:cloud`) are automatically detected and routed to Ollama Cloud with the suffix stripped before the upstream call.
 
 ### Environment Variables
 
