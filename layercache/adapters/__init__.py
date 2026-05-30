@@ -108,19 +108,9 @@ def detect_provider(
                 "whisper-",
             }
             if not any(model_lower.startswith(p) for p in known_openai_prefixes):
-                # Prefer providers with a default_model set (indicates a
-                # specific subscription/product), then fall back to first
-                # configured provider with base_url.
-                fallback = None
                 for key, cfg in providers_config.root.items():
-                    if key == "openai" or not cfg.base_url:
-                        continue
-                    if fallback is None:
-                        fallback = key
-                    if cfg.default_model:
+                    if key != "openai" and cfg.base_url:
                         return key
-                if fallback:
-                    return fallback
 
     # Default to OpenAI
     return "openai"

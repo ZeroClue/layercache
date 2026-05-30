@@ -70,3 +70,4 @@ layercache/dashboard/        — Web dashboard (Jinja2 + HTMX + Chart.js)
 - `max_session_tokens` in config: truncates L2 to fit within token budget (provider-agnostic); also hot-reloadable
 - Prefix threshold warning logged at INFO once per hour per prefix hash when L0+L1+L2 is below ~1024 tokens
 - `layercache.schema.json` must be regenerated after changing `config.py` fields: run `layercache-schema` from the project root
+- **detect_provider() hole**: `default_model` preference can route `-free` suffixed models to wrong provider. If someone sends `deepseek-v4-flash-free` through `opencode-go`, it routes to `opencode-go` instead of `opencode` (Zen) because the fallback returns the first provider with `base_url`. Currently not an issue since Go doesn't have `-free` models.

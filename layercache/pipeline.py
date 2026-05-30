@@ -869,6 +869,17 @@ class RequestPipeline:
                 model_name = self._resolve_model(model_name, provider)
                 litellm_model = f"{adapter}/{model_name}"
 
+            # Register unknown models with LiteLLM to bypass its internal model
+            # registry validation (needed for custom providers like opencode Zen/Go)
+            if litellm_model not in litellm.model_cost:
+                litellm.model_cost[litellm_model] = {
+                    "max_tokens": 128000,
+                    "input_cost_per_token": 0,
+                    "output_cost_per_token": 0,
+                    "litellm_provider": "openai",
+                    "mode": "chat",
+                }
+
             response = await litellm.acompletion(
                 model=litellm_model,
                 **{k: v for k, v in payload.items() if k != "model"},
@@ -958,6 +969,17 @@ class RequestPipeline:
                     model_name = model
                 model_name = self._resolve_model(model_name, provider)
                 litellm_model = f"{adapter}/{model_name}"
+
+            # Register unknown models with LiteLLM to bypass its internal model
+            # registry validation (needed for custom providers like opencode Zen/Go)
+            if litellm_model not in litellm.model_cost:
+                litellm.model_cost[litellm_model] = {
+                    "max_tokens": 128000,
+                    "input_cost_per_token": 0,
+                    "output_cost_per_token": 0,
+                    "litellm_provider": "openai",
+                    "mode": "chat",
+                }
 
             response = await litellm.acompletion(
                 model=litellm_model,
